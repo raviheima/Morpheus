@@ -1,8 +1,0 @@
---- old
-+++ new
-@@ -1,0 +1,1 @@
-+Architectural Decisions
-@@ -2,0 +3,3 @@
-+A unified digital forensics investigation app created to solve the following problems
-+
-+- integrity of evidence files
