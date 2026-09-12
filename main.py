@@ -142,6 +142,8 @@ def list_evidence_interactive():
         table.add_column("Size")
         table.add_column("SHA-256", style="green")
         table.add_column("Collected By")
+        table.add_column("MD5-SUM")
+
 
         for item in items:
             table.add_row(
@@ -150,6 +152,7 @@ def list_evidence_interactive():
                 f"{item.file_size:,}",
                 item.sha256_hash[:16] + "…",
                 item.collected_by,
+                item.md5_hash,
             )
         console.print(table)
     except Exception as e:
