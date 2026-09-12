@@ -1,0 +1,18 @@
+--- old
++++ new
+@@ -6,1 +6,2 @@
+-- 
++- users data will be hashed and encrypted
++- creating a storyline that is convincing for even non technical persons
+@@ -8,0 +9,11 @@
++
++
++## 2  Easy to use without training and supports quick creating of case 
++
++
++
++   1. This problem will be solved by creating an easy to use interface
++   2. Consisting of A quick create and add evidence button
++   3. A View Case button
++   4. 
++    
