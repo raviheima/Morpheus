@@ -47,10 +47,11 @@ def interactive_menu():
         console.print("5. Show case details")
         console.print("6. View Chain of Custody")
         console.print("7. Export Case to JSON")
+        console.print("8. Generate case Report (Markdown)")
         console.print("0. Exit")
         console.print("─" * 40)
 
-        choice = Prompt.ask("Select an option", choices=["0", "1", "2", "3", "4", "5", "6","7"], default="0")
+        choice = Prompt.ask("Select an option", choices=["0", "1", "2", "3", "4", "5", "6","7","8"], default="0")
 
         if choice == "0":
             console.print("\n[green]Goodbye.[/green]")
@@ -69,6 +70,9 @@ def interactive_menu():
             view_custody_interactive()
         elif choice == "7":
              export_case_interactive()
+        elif choice == "8":
+            generate_report_interactive()
+
 
 
 def create_case_interactive():
@@ -257,6 +261,8 @@ def view_custody_interactive():
 
     console.print(table)
 
+
+
 #export case function
 
 def export_case_interactive():
@@ -283,6 +289,36 @@ def export_case_interactive():
                 border_style="green",
             )
         )
+    except Exception as e:
+        console.print(f"[bold red]Error:[/bold red] {e}")
+
+## export case to markdown
+#
+def generate_report_interactive():
+    console.print("\n[bold cyan]Generate Case Report[/bold cyan]")
+    case_number = Prompt.ask("Case number")
+
+    try:
+        report = CaseService.generate_markdown_report(case_number)
+
+        default_filename = f"{case_number}_report.md"
+        filename = Prompt.ask("Output filename", default=default_filename)
+
+        with open(filename, "w", encoding="utf-8") as f:
+            f.write(report)
+
+        console.print(
+            Panel.fit(
+                f"[bold green]Report generated successfully![/bold green]\n\n"
+                f"[cyan]File:[/cyan] {filename}",
+                border_style="green",
+            )
+        )
+
+        # Optional: show a short preview
+        if Confirm.ask("Show preview in terminal?", default=False):
+            console.print("\n" + report)
+
     except Exception as e:
         console.print(f"[bold red]Error:[/bold red] {e}")
 
