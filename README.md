@@ -20,7 +20,7 @@ A unified digital forensics investigation app created to solve the following pro
 
 Things to start working on to solve this problem 
 
-- create the cli interface
-- create the cli version of the case creation
-- 
-    
+- create the cli interface done
+- create the cli version of the case creation done
+- cli view case and chain of custody works
+-

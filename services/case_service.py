@@ -2,8 +2,7 @@ from datetime import datetime, timezone
 import uuid
 import json
 from typing import Optional, List
-
-from database import SessionLocal, Case, ChainOfCustody
+from database import SessionLocal, Case, ChainOfCustody, EvidenceItem
 
 
 class CaseService:
