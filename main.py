@@ -46,10 +46,11 @@ def interactive_menu():
         console.print("4. List evidence of a case")
         console.print("5. Show case details")
         console.print("6. View Chain of Custody")
+        console.print("7. Export Case to JSON")
         console.print("0. Exit")
         console.print("─" * 40)
 
-        choice = Prompt.ask("Select an option", choices=["0", "1", "2", "3", "4", "5", "6"], default="0")
+        choice = Prompt.ask("Select an option", choices=["0", "1", "2", "3", "4", "5", "6","7"], default="0")
 
         if choice == "0":
             console.print("\n[green]Goodbye.[/green]")
@@ -65,8 +66,9 @@ def interactive_menu():
         elif choice == "5":
             show_case_details_interactive()
         elif choice == "6":
-
             view_custody_interactive()
+        elif choice == "7":
+             export_case_interactive()
 
 
 def create_case_interactive():
@@ -252,6 +254,34 @@ def view_custody_interactive():
 
     console.print(table)
 
+#export case function
+
+def export_case_interactive():
+    console.print("\n[bold cyan]Export Case to JSON[/bold cyan]")
+    case_number = Prompt.ask("Case number")
+
+    try:
+        data = CaseService.export_case_to_json(case_number)
+
+        # Default filename
+        default_filename = f"{case_number}.json"
+        filename = Prompt.ask("Output filename", default=default_filename)
+
+        import json
+        with open(filename, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2, ensure_ascii=False)
+
+        console.print(
+            Panel.fit(
+                f"[bold green]Case exported successfully![/bold green]\n\n"
+                f"[cyan]File:[/cyan] {filename}\n"
+                f"[cyan]Evidence items:[/cyan] {len(data['evidence'])}\n"
+                f"[cyan]Custody records:[/cyan] {len(data['chain_of_custody'])}",
+                border_style="green",
+            )
+        )
+    except Exception as e:
+        console.print(f"[bold red]Error:[/bold red] {e}")
 
 @app.callback()
 def main(ctx: typer.Context):

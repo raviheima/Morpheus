@@ -111,3 +111,78 @@ class CaseService:
             return case, logs
         finally:
             db.close()
+
+# case service export_case_to_json
+
+
+    @staticmethod
+    def export_case_to_json(case_number: str) -> dict:
+        """
+        Export a full case (metadata + evidence + chain of custody) as a dictionary.
+        Ready to be written to a JSON file.
+        """
+        db = SessionLocal()
+        try:
+            case = db.query(Case).filter(Case.case_number == case_number).first()
+            if not case:
+                raise ValueError(f"Case not found: {case_number}")
+
+            # Evidence items
+            evidence_items = (
+                db.query(EvidenceItem)
+                .filter(EvidenceItem.case_id == case.id)
+                .order_by(EvidenceItem.collected_at.asc())
+                .all()
+            )
+
+            # Chain of custody
+            custody_logs = (
+                db.query(ChainOfCustody)
+                .filter(ChainOfCustody.case_id == case.id)
+                .order_by(ChainOfCustody.timestamp.asc())
+                .all()
+            )
+
+            export_data = {
+                "exported_at": datetime.now(timezone.utc).isoformat(),
+                "case": {
+                    "case_number": case.case_number,
+                    "case_name": case.case_name,
+                    "examiner_name": case.examiner_name,
+                    "examiner_email": case.examiner_email,
+                    "examiner_notes": case.examiner_notes,
+                    "organisation": case.organisation,
+                    "description": case.description,
+                    "status": case.status,
+                    "created_at": case.created_at.isoformat(),
+                },
+                "evidence": [
+                    {
+                        "id": item.id,
+                        "original_filename": item.original_filename,
+                        "file_size": item.file_size,
+                        "mime_type": item.mime_type,
+                        "sha256_hash": item.sha256_hash,
+                        "md5_hash": item.md5_hash,
+                        "collected_by": item.collected_by,
+                        "collected_at": item.collected_at.isoformat(),
+                        "notes": item.notes,
+                    }
+                    for item in evidence_items
+                ],
+                "chain_of_custody": [
+                    {
+                        "id": log.id,
+                        "action": log.action,
+                        "actor": log.actor,
+                        "timestamp": log.timestamp.isoformat(),
+                        "details": log.details,
+                        "evidence_id": log.evidence_id,
+                    }
+                    for log in custody_logs
+                ],
+            }
+
+            return export_data
+        finally:
+            db.close()
