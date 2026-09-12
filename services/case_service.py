@@ -279,3 +279,74 @@ class CaseService:
             return "\n".join(lines)
         finally:
             db.close()
+
+#add methods for closing and deleting CaseS
+
+    @staticmethod
+    def close_case(case_number: str, closed_by: str) -> Case:
+        """Soft-close a case (status → closed) and log it."""
+        db = SessionLocal()
+        try:
+            case = db.query(Case).filter(Case.case_number == case_number).first()
+            if not case:
+                raise ValueError(f"Case not found: {case_number}")
+
+            if case.status == "closed":
+                raise ValueError("Case is already closed.")
+
+            case.status = "closed"
+            db.flush()
+
+            custody = ChainOfCustody(
+                case_id=case.id,
+                action="case_closed",
+                actor=closed_by,
+                details=json.dumps({"previous_status": "open"}),
+            )
+            db.add(custody)
+            db.commit()
+            db.refresh(case)
+            return case
+        except Exception:
+            db.rollback()
+            raise
+        finally:
+            db.close()
+
+# delete case from db
+    @staticmethod
+    def delete_case(case_number: str, deleted_by: str) -> None:
+        """
+        Permanently delete a case and all related records.
+        This is irreversible.
+        """
+        db = SessionLocal()
+        try:
+            case = db.query(Case).filter(Case.case_number == case_number).first()
+            if not case:
+                raise ValueError(f"Case not found: {case_number}")
+
+            # Log the deletion first (while the case still exists)
+            custody = ChainOfCustody(
+                case_id=case.id,
+                action="case_deleted",
+                actor=deleted_by,
+                details=json.dumps({
+                    "case_name": case.case_name,
+                    "organisation": case.organisation,
+                }),
+            )
+            db.add(custody)
+            db.flush()
+
+            # Delete related records
+            db.query(EvidenceItem).filter(EvidenceItem.case_id == case.id).delete()
+            db.query(ChainOfCustody).filter(ChainOfCustody.case_id == case.id).delete()
+            db.delete(case)
+
+            db.commit()
+        except Exception:
+            db.rollback()
+            raise
+        finally:
+            db.close()

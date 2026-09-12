@@ -48,10 +48,12 @@ def interactive_menu():
         console.print("6. View Chain of Custody")
         console.print("7. Export Case to JSON")
         console.print("8. Generate case Report (Markdown)")
+        console.print("9. Close a case")
+        console.print("10. Delete a case (dangerous)")
         console.print("0. Exit")
         console.print("─" * 40)
 
-        choice = Prompt.ask("Select an option", choices=["0", "1", "2", "3", "4", "5", "6","7","8"], default="0")
+        choice = Prompt.ask("Select an option", choices=["0", "1", "2", "3", "4", "5", "6","7","8","9","10"], default="0")
 
         if choice == "0":
             console.print("\n[green]Goodbye.[/green]")
@@ -72,6 +74,10 @@ def interactive_menu():
              export_case_interactive()
         elif choice == "8":
             generate_report_interactive()
+        elif choice == "9":
+            close_case_interactive()
+        elif choice == "10":
+            delete_case_interactive()
 
 
 
@@ -111,6 +117,7 @@ def add_evidence_interactive():
     file_path = Prompt.ask("Full path to the file")
     collected_by = Prompt.ask("Collected by")
     notes = Prompt.ask("Notes (optional)", default="")
+    console.print(f"\n[dim]Starting ingestion of:[/dim] {file_path}")
 
     try:
         evidence = EvidenceService.add_evidence(
@@ -119,6 +126,7 @@ def add_evidence_interactive():
             collected_by=collected_by,
             notes=notes or None,
         )
+
         console.print(
             Panel.fit(
                 f"[bold green]Evidence added![/bold green]\n\n"
@@ -321,6 +329,67 @@ def generate_report_interactive():
 
     except Exception as e:
         console.print(f"[bold red]Error:[/bold red] {e}")
+
+
+# delete and close case functions
+def close_case_interactive():
+    console.print("\n[bold cyan]Close Case[/bold cyan]")
+    case_number = Prompt.ask("Case number")
+    closed_by = Prompt.ask("Closed by")
+
+    if not Confirm.ask(f"Are you sure you want to close {case_number}?", default=False):
+        console.print("[yellow]Cancelled.[/yellow]")
+        return
+
+    try:
+        case = CaseService.close_case(case_number, closed_by)
+        console.print(
+            Panel.fit(
+                f"[bold green]Case closed successfully![/bold green]\n\n"
+                f"[cyan]Case:[/cyan] {case.case_number}\n"
+                f"[cyan]Status:[/cyan] {case.status}",
+                border_style="green",
+            )
+        )
+    except Exception as e:
+        console.print(f"[bold red]Error:[/bold red] {e}")
+
+
+def delete_case_interactive():
+    console.print("\n[bold red]Delete Case (Irreversible)[/bold red]")
+    case_number = Prompt.ask("Case number")
+    deleted_by = Prompt.ask("Deleted by")
+
+    console.print(
+        f"\n[bold red]WARNING:[/bold red] This will permanently delete the case "
+        f"and all its evidence & custody records."
+    )
+    if not Confirm.ask(f"Type the case number again to confirm deletion", default=False):
+        # Extra safety: ask them to type the case number
+        confirmation = Prompt.ask("Please re-type the case number to confirm")
+        if confirmation != case_number:
+            console.print("[yellow]Confirmation failed. Cancelled.[/yellow]")
+            return
+
+    try:
+        CaseService.delete_case(case_number, deleted_by)
+        console.print(
+            Panel.fit(
+                f"[bold green]Case {case_number} has been permanently deleted.[/bold green]",
+                border_style="green",
+            )
+        )
+    except Exception as e:
+        console.print(f"[bold red]Error:[/bold red] {e}")
+
+
+
+
+
+
+
+
+
 
 @app.callback()
 def main(ctx: typer.Context):
