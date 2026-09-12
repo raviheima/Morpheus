@@ -177,7 +177,13 @@ class CaseService:
                         "actor": log.actor,
                         "timestamp": log.timestamp.isoformat(),
                         "details": log.details,
-                        "evidence_id": log.evidence_id,
+                        "evidence_id": (
+                                    # Look up the MD5 if this log is linked to an evidence item
+                                    next(
+                                        (e.md5_hash for e in evidence_items if e.id == log.evidence_id),
+                                        None
+                                    )
+                                ),
                     }
                     for log in custody_logs
                 ],
