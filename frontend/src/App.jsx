@@ -1,8 +1,91 @@
+import { useState } from 'react'
 import './App.css'
 
 function App() {
+const [showWelcome, setShowWelcome] = useState(false)
+  if (showWelcome) {
   return (
-    <main className="app">
+    <main className="app onboarding">
+      <nav className="navbar">
+        <div className="brand">
+          <div className="brand-mark">M</div>
+          <span>MORPHEUS</span>
+        </div>
+
+        <div className="nav-status">
+          <span className="status-dot"></span>
+          FORENSIC WORKSPACE
+        </div>
+      </nav>
+
+      <section className="welcome-screen">
+        <p className="eyebrow">WELCOME TO MORPHEUS</p>
+
+        <h1>
+          Start your
+          <span> investigation.</span>
+        </h1>
+
+        <p className="hero-description">
+          Before you begin, take a moment to understand how Morpheus
+          protects evidence and keeps your investigation accountable.
+        </p>
+
+        <div className="guidelines">
+          <div className="guideline">
+            <span>01</span>
+            <div>
+              <h3>Preserve the original</h3>
+              <p>
+                Register evidence and verify its integrity without
+                unnecessarily altering the original source.
+              </p>
+            </div>
+          </div>
+
+          <div className="guideline">
+            <span>02</span>
+            <div>
+              <h3>Every action matters</h3>
+              <p>
+                Important evidence activity is recorded so the chain of
+                custody remains clear and accountable.
+              </p>
+            </div>
+          </div>
+
+          <div className="guideline">
+            <span>03</span>
+            <div>
+              <h3>Verify before you investigate</h3>
+              <p>
+                Use integrity information such as cryptographic hashes to
+                help confirm that evidence has not changed unexpectedly.
+              </p>
+            </div>
+          </div>
+        </div>
+
+        <div className="welcome-actions">
+          <button className="primary-button">
+            Create a Case
+            <span>→</span>
+          </button>
+
+          <button
+            className="secondary-button"
+            onClick={() => setShowWelcome(false)}
+          >
+            Back
+          </button>
+        </div>
+      </section>
+    </main>
+  )
+}
+
+return (
+  <main className="app">
       <nav className="navbar">
         <div className="brand">
           <div className="brand-mark">M</div>
@@ -31,11 +114,13 @@ function App() {
           </p>
 
           <div className="hero-actions">
-            <button className="primary-button">
+            <button
+              className="primary-button"
+              onClick={() => setShowWelcome(true)}
+            >
               Get Started
               <span>→</span>
             </button>
-
             <button className="secondary-button">
               Learn how it works
             </button>
