@@ -587,3 +587,17 @@ h1 span {
   color: #c7ccd1;
   font-size: 12px;
 }
+.back-button {
+  margin-bottom: 25px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: #7f8992;
+  font-size: 12px;
+  cursor: pointer;
+  transition: color 0.2s ease;
+}
+
+.back-button:hover {
+  color: #f1f3f5;
+}

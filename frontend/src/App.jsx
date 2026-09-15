@@ -21,7 +21,7 @@ const [showCreateCase, setShowCreateCase] = useState(false)
           </div>
         </nav>
 
-        <CreateCase />
+        <CreateCase onBack={() => setShowCreateCase(false)}/>
       </main>
     )
   }
@@ -146,7 +146,13 @@ return (
               Get Started
               <span>→</span>
             </button>
-            <button className="secondary-button">
+            <button className="secondary-button"
+              onClick={() =>
+    document
+      .getElementById('how-it-works')
+      .scrollIntoView({ behavior: 'smooth' })
+  }
+>
               Learn how it works
             </button>
           </div>
@@ -183,7 +189,7 @@ return (
         </div>
       </section>
 
-      <section className="principles">
+      <section className="principles"id="how-it-works">
         <div className="section-heading">
           <p className="eyebrow">BUILT FOR THE INVESTIGATION</p>
           <h2>Evidence tells the story.</h2>
