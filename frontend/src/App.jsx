@@ -1,8 +1,30 @@
 import { useState } from 'react'
+import CreateCase from './components/onboarding/CreateCase'
 import './App.css'
 
 function App() {
 const [showWelcome, setShowWelcome] = useState(false)
+const [showCreateCase, setShowCreateCase] = useState(false)
+
+  if (showCreateCase) {
+    return (
+      <main className="app">
+        <nav className="navbar">
+          <div className="brand">
+            <div className="brand-mark">M</div>
+            <span>MORPHEUS</span>
+          </div>
+
+          <div className="nav-status">
+            <span className="status-dot"></span>
+            FORENSIC WORKSPACE
+          </div>
+        </nav>
+
+        <CreateCase />
+      </main>
+    )
+  }
   if (showWelcome) {
   return (
     <main className="app onboarding">
@@ -67,7 +89,10 @@ const [showWelcome, setShowWelcome] = useState(false)
         </div>
 
         <div className="welcome-actions">
-          <button className="primary-button">
+          <button className="primary-button"
+                  onClick={() => setShowCreateCase(true)}
+           >
+                  
             Create a Case
             <span>→</span>
           </button>

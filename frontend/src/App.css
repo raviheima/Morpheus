@@ -443,3 +443,147 @@ h1 span {
     width: 100%;
   }
 }
+
+.create-case {
+  max-width: 900px;
+  margin: 0 auto;
+  padding: 90px 7%;
+}
+
+.create-case-header {
+  margin-bottom: 50px;
+}
+
+.create-case-header h1 {
+  max-width: 700px;
+  margin-bottom: 20px;
+}
+
+.create-case-header h1 span {
+  display: inline;
+}
+
+.create-case-description {
+  max-width: 680px;
+  color: #89929b;
+  font-size: 14px;
+  line-height: 1.7;
+}
+
+.case-form {
+  border-top: 1px solid #252b31;
+  padding-top: 35px;
+}
+
+.form-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 28px;
+  margin-bottom: 28px;
+}
+
+.form-field {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-bottom: 28px;
+}
+
+.form-field label {
+  color: #c7ccd1;
+  font-size: 13px;
+}
+
+.form-field label span {
+  color: #89929b;
+}
+
+.form-field input,
+.form-field textarea {
+  width: 100%;
+  padding: 14px 15px;
+  border: 1px solid #252b31;
+  border-radius: 4px;
+  background: #101419;
+  color: #f1f3f5;
+  font: inherit;
+  font-size: 13px;
+  outline: none;
+  transition: border-color 0.2s ease;
+}
+
+.form-field input:focus,
+.form-field textarea:focus {
+  border-color: #59636d;
+}
+
+.form-field input::placeholder,
+.form-field textarea::placeholder {
+  color: #59636d;
+}
+
+.form-field textarea {
+  resize: vertical;
+  min-height: 110px;
+}
+
+.case-number-info {
+  display: flex;
+  justify-content: space-between;
+  gap: 30px;
+  margin: 15px 0 35px;
+  padding: 20px;
+  border: 1px solid #252b31;
+  background: #0d1014;
+}
+
+.case-number-info div {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.case-number-info span {
+  color: #59636d;
+  font-family: monospace;
+  font-size: 10px;
+  letter-spacing: 0.08em;
+}
+
+.case-number-info strong {
+  color: #c7ccd1;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.case-number-info p {
+  max-width: 420px;
+  margin: 0;
+  color: #7f8992;
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+@media (max-width: 650px) {
+  .create-case {
+    padding: 60px 5%;
+  }
+
+  .form-grid {
+    grid-template-columns: 1fr;
+    gap: 0;
+  }
+
+  .case-number-info {
+    flex-direction: column;
+  }
+
+  .create-case .primary-button {
+    width: 100%;
+  }
+}
+.form-error {
+  margin: -4px 0 0;
+  color: #c7ccd1;
+  font-size: 12px;
+}
