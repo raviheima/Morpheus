@@ -1,8 +1,8 @@
 import json
 from typing import Optional, List
 
-from database import SessionLocal, Case, EvidenceItem, ChainOfCustody
-from hashing import calculate_hashes
+from app.database import SessionLocal, Case, EvidenceItem, ChainOfCustody
+from app.hashing import calculate_hashes
 
 
 class EvidenceService:
