@@ -1,3 +1,7 @@
 typer[all]
 rich
 sqlalchemy
+fastapi
+uvicorn
+python-multipart
+pydantic
