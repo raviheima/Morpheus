@@ -1,6 +1,6 @@
 .zettel-notes
 .zed
-ignore
+*ignore/*
 .venv
 __pycache__/
 *.py[cod]
