@@ -1,5 +1,5 @@
 import { useState } from 'react'
-function CreateCase() {
+function CreateCase({ onBack }) {
   const [formData, setFormData] = useState({
     caseName: '',
     examinerName: '',
@@ -31,6 +31,15 @@ const handleSubmit = (e) => {
  return (
     <section className="create-case">
       <div className="create-case-header">
+      <button type="button" className="back-button" onClick={onBack}>
+    ← Back
+  </button>
+
+  <p className="eyebrow">NEW INVESTIGATION</p>
+  <h1>
+    Create a
+    <span> case.</span>
+  </h1>
         <p className="eyebrow">NEW INVESTIGATION</p>
 
         <h1>
