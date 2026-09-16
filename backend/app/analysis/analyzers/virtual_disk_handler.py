@@ -53,6 +53,7 @@ class VirtualDiskHandler(BaseAnalyzer):
             result["identification"] = id_result
 
             # 3. Scan every volume inside the VHD
+            # 3. Scan every volume that has a recognized filesystem
             scanner = FilesystemScanner()
 
             # Open the extracted VHD
@@ -62,17 +63,25 @@ class VirtualDiskHandler(BaseAnalyzer):
                 ewf_handle.open(filenames)
                 vhd_img = EWFImgInfo(ewf_handle)
             else:
-                vhd_img = pytsk3.Img_Info(temp_vhd)
+                # Use the new VHDI support
+                import pyvhdi
+                from app.analysis.identifier import VHDIImgInfo
+                vhdi_file = pyvhdi.file()
+                vhdi_file.open(temp_vhd)
+                vhd_img = VHDIImgInfo(vhdi_file)
 
             for vol in id_result.get("volumes", []):
-                if vol.get("filesystem") in ["Unknown", None]:
+                fs_type = vol.get("filesystem", "Unknown")
+
+                # Skip volumes we cannot open
+                if fs_type == "Unknown" or fs_type is None:
                     continue
 
                 offset = vol["start_sector"] * 512
                 scan = scanner.analyze(
                     img_info=vhd_img,
                     offset=offset,
-                    volume_name=f"{vhd_path} → {vol['description']}"
+                    volume_name=f"{vhd_path} → {vol['description']} ({fs_type})"
                 )
                 result["scans"].append(scan)
 
