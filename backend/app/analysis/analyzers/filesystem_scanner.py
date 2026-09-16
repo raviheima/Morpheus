@@ -1,4 +1,4 @@
-from typing import Any, Dict, List
+from typing import Any, Dict
 from pathlib import PureWindowsPath
 import pytsk3
 
@@ -7,29 +7,41 @@ from app.analysis.base import BaseAnalyzer
 
 class FilesystemScanner(BaseAnalyzer):
     """
-    Walks a filesystem (volume) once and collects interesting findings.
-    Designed to be generic and reusable on any NTFS/FAT/etc volume,
-    including volumes inside VHDs.
+    Walks a filesystem once and collects high-value forensic artifacts.
+    Generic and reusable on any volume (including nested VHDs).
     """
 
     name = "filesystem_scanner"
-    description = "Scans a volume for interesting files and virtual disks"
+    description = "Scans a volume for investigator-relevant artifacts"
 
-    # File extensions we care about
+    # === Extension & name based rules ===
     VIRTUAL_DISK_EXTS = {".vhd", ".vhdx", ".vmdk"}
-    EMAIL_EXTS = {".eml", ".msg"}
-    DOCUMENT_EXTS = {".pdf", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx", ".txt"}
-    IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".gif", ".bmp", ".tiff"}
-    REGISTRY_NAMES = {"ntuser.dat", "sam", "system", "software", "security", "default"}
+    EMAIL_EXTS = {".eml", ".msg", ".pst", ".ost"}
+    DOCUMENT_EXTS = {".pdf", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx", ".txt", ".rtf", ".odt"}
+    IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".gif", ".bmp", ".tiff", ".webp", ".heic"}
+    EVENTLOG_EXTS = {".evtx"}
+    PREFETCH_EXTS = {".pf"}
+    LNK_EXTS = {".lnk"}
+    ARCHIVE_EXTS = {".zip", ".rar", ".7z", ".tar", ".gz"}
+    EXECUTABLE_EXTS = {".exe", ".dll", ".sys", ".bat", ".ps1", ".vbs", ".cmd"}
+    DATABASE_EXTS = {".sqlite", ".sqlite3", ".db", ".db3"}
+
+    REGISTRY_NAMES = {
+        "ntuser.dat", "sam", "system", "software", "security",
+        "default", "usrclass.dat", "components", "bbisystem"
+    }
+
+    BROWSER_FILES = {
+        "history", "cookies", "login data", "web data", "top sites",
+        "favicons", "bookmarks", "places.sqlite", "cookies.sqlite",
+        "formhistory.sqlite", "webdata", "logins.json"
+    }
+
+    ENCRYPTION_KEYWORDS = {
+        "truecrypt", "veracrypt", "bitlocker", "crypt", "encrypted"
+    }
 
     def analyze(self, target: str = None, **kwargs) -> Dict[str, Any]:
-        """
-        target is not used directly.
-        We expect these kwargs:
-            - img_info: pytsk3.Img_Info
-            - offset: byte offset of the volume
-            - volume_name: optional label for reporting
-        """
         img_info = kwargs.get("img_info")
         offset = kwargs.get("offset", 0)
         volume_name = kwargs.get("volume_name", "unknown")
@@ -45,7 +57,16 @@ class FilesystemScanner(BaseAnalyzer):
             "documents": [],
             "images": [],
             "registry_hives": [],
-            "recycle_bin_items": [],
+            "event_logs": [],
+            "browser_artifacts": [],
+            "prefetch": [],
+            "lnk_files": [],
+            "jump_lists": [],
+            "recycle_bin": [],
+            "executables": [],
+            "databases": [],
+            "archives": [],
+            "encryption_related": [],
             "other_interesting": [],
             "total_files_scanned": 0,
             "errors": [],
@@ -60,7 +81,6 @@ class FilesystemScanner(BaseAnalyzer):
         return result
 
     def _walk_directory(self, fs, directory, current_path: str, result: Dict):
-        """Recursively walk the filesystem."""
         for entry in directory:
             if entry.info.name.name in [b".", b".."]:
                 continue
@@ -72,15 +92,25 @@ class FilesystemScanner(BaseAnalyzer):
 
             full_path = str(PureWindowsPath(current_path) / name)
             result["total_files_scanned"] += 1
-
-            # Skip system metadata directories early if needed
             lower_name = name.lower()
+            lower_path = full_path.lower()
 
-            # Check if it's a directory
+            # Directory handling
             if entry.info.meta and entry.info.meta.type == pytsk3.TSK_FS_META_TYPE_DIR:
-                # Special handling for Recycle Bin
                 if lower_name in ["$recycle.bin", "recycler"]:
-                    result["recycle_bin_items"].append(full_path)
+                    result["recycle_bin"].append({
+                        "path": full_path,
+                        "name": name,
+                        "type": "recycle_bin_folder"
+                    })
+
+                # Jump Lists folders
+                if "automaticdestinations" in lower_path or "customdestinations" in lower_path:
+                    result["jump_lists"].append({
+                        "path": full_path,
+                        "name": name,
+                        "type": "jump_list_folder"
+                    })
 
                 try:
                     sub_dir = entry.as_directory()
@@ -89,34 +119,83 @@ class FilesystemScanner(BaseAnalyzer):
                     pass
                 continue
 
-            # It's a file – categorize it
-            self._categorize_file(full_path, name, entry, result)
+            # File handling
+            self._categorize_file(full_path, name, lower_name, lower_path, entry, result)
 
-    def _categorize_file(self, full_path: str, name: str, entry, result: Dict):
-        lower_name = name.lower()
+    def _categorize_file(self, full_path, name, lower_name, lower_path, entry, result):
         ext = PureWindowsPath(name).suffix.lower()
+        size = entry.info.meta.size if entry.info.meta else 0
 
         file_info = {
             "path": full_path,
             "name": name,
-            "size": entry.info.meta.size if entry.info.meta else 0,
+            "size": size,
         }
 
+        # Virtual Disks
         if ext in self.VIRTUAL_DISK_EXTS:
             result["virtual_disks"].append(file_info)
+            return
 
-        elif ext in self.EMAIL_EXTS:
+        # Emails
+        if ext in self.EMAIL_EXTS:
             result["emails"].append(file_info)
+            return
 
-        elif ext in self.DOCUMENT_EXTS:
+        # Documents
+        if ext in self.DOCUMENT_EXTS:
             result["documents"].append(file_info)
+            return
 
-        elif ext in self.IMAGE_EXTS:
+        # Images
+        if ext in self.IMAGE_EXTS:
             result["images"].append(file_info)
+            return
 
-        elif lower_name in self.REGISTRY_NAMES or lower_name.endswith(".dat"):
-            # Simple registry hive detection
-            if any(h in lower_name for h in self.REGISTRY_NAMES):
-                result["registry_hives"].append(file_info)
+        # Event Logs
+        if ext in self.EVENTLOG_EXTS:
+            result["event_logs"].append(file_info)
+            return
 
-        # You can keep expanding categories here later
+        # Prefetch
+        if ext in self.PREFETCH_EXTS:
+            result["prefetch"].append(file_info)
+            return
+
+        # LNK files
+        if ext in self.LNK_EXTS:
+            result["lnk_files"].append(file_info)
+            return
+
+        # Archives
+        if ext in self.ARCHIVE_EXTS:
+            result["archives"].append(file_info)
+            return
+
+        # Executables
+        if ext in self.EXECUTABLE_EXTS:
+            result["executables"].append(file_info)
+            return
+
+        # Databases
+        if ext in self.DATABASE_EXTS:
+            result["databases"].append(file_info)
+            return
+
+        # Registry Hives
+        if lower_name in self.REGISTRY_NAMES or any(h in lower_name for h in self.REGISTRY_NAMES):
+            result["registry_hives"].append(file_info)
+            return
+
+        # Browser artifacts
+        if any(b in lower_name for b in self.BROWSER_FILES) or "chrome" in lower_path or "firefox" in lower_path or "edge" in lower_path:
+            result["browser_artifacts"].append(file_info)
+            return
+
+        # Encryption related
+        if any(k in lower_name for k in self.ENCRYPTION_KEYWORDS):
+            result["encryption_related"].append(file_info)
+            return
+
+        # Catch interesting leftover files (optional)
+        # result["other_interesting"].append(file_info)

@@ -2,13 +2,13 @@
 
 ## Phase 1: Foundation
 - [x] Create modular analysis package structure (`analysis/`)
-- [ ] Define abstract base class for all analyzers (`base.py`)
-- [ ] Implement **Data Source Identifier**
-  - [ ] Detect image type (E01, raw, VHD, VHDX, etc.)
-  - [ ] List all volumes / partitions
-  - [ ] Identify filesystem of each volume (NTFS, FAT32, exFAT, Ext…)
-  - [ ] Determine if it is a full Operating System or a simple data drive
-  - [ ] Detect embedded virtual disks (VHD/VHDX)
+- [x] Define abstract base class for all analyzers (`base.py`)
+- [x] Implement **Data Source Identifier**
+  - [x] Detect image type (E01, raw, VHD, VHDX, etc.)
+  - [x] List all volumes / partitions
+  - [x] Identify filesystem of each volume (NTFS, FAT32, exFAT, Ext…)
+  - [x] Determine if it is a full Operating System or a simple data drive
+  - [x] Detect embedded virtual disks (VHD/VHDX)
 - [ ] Create Analysis Orchestrator (decides which analyzers to run)
 
 ## Phase 2: Core Filesystem Analysis (works for both OS and non-OS)
