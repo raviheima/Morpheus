@@ -29,3 +29,5 @@ Things to start working on to solve this problem
 - Search evidence by hash 
 - Better input validation + error messages
 - Add a progress bar when hashing large files (the E01 was 300 MB) done
+
+---
