@@ -9,7 +9,7 @@
   - [x] Identify filesystem of each volume (NTFS, FAT32, exFAT, Ext…)
   - [x] Determine if it is a full Operating System or a simple data drive
   - [x] Detect embedded virtual disks (VHD/VHDX)
-- [ ] Create Analysis Orchestrator (decides which analyzers to run)
+- [x] Create Analysis Orchestrator (decides which analyzers to run)
 
 ## Phase 2: Core Filesystem Analysis (works for both OS and non-OS)
 - [ ] Deleted files recovery
