@@ -4,7 +4,10 @@ from app.analysis.orchestrator import AnalysisOrchestrator
 def print_scan(scan, indent="  "):
     if not scan:
         return
+
     print(f"{indent}Files scanned     : {scan.get('total_files_scanned', 0)}")
+    print(f"{indent}Deleted files     : {scan.get('total_deleted_found', 0)}")
+    print(f"{indent}Suspicious files  : {len(scan.get('suspicious_files', []))}")
     print(f"{indent}Emails            : {len(scan.get('emails', []))}")
     print(f"{indent}Documents         : {len(scan.get('documents', []))}")
     print(f"{indent}Images            : {len(scan.get('images', []))}")
@@ -14,6 +17,14 @@ def print_scan(scan, indent="  "):
     print(f"{indent}Prefetch          : {len(scan.get('prefetch', []))}")
     print(f"{indent}LNK files         : {len(scan.get('lnk_files', []))}")
     print(f"{indent}Executables       : {len(scan.get('executables', []))}")
+
+    # Show a few suspicious files with reasons
+    suspicious = scan.get("suspicious_files", [])
+    if suspicious:
+        print(f"{indent}--- Sample Suspicious Files ---")
+        for item in suspicious[:5]:  # show only first 5
+            reasons = ", ".join(item.get("reasons", []))
+            print(f"{indent}  • {item['path']}  [{reasons}]")
 
 
 def main():
@@ -82,6 +93,7 @@ def main():
     print(f"Registry hives       : {summary['total_registry_hives']}")
     print(f"Event logs           : {summary['total_event_logs']}")
     print(f"Browser artifacts    : {summary['total_browser_artifacts']}")
+    print(f"Deleted files        : {sum(vol.get('scan_result', {}).get('total_deleted_found', 0) for vol in report['volume_scans'] if vol.get('scanned'))}")
 
 
 if __name__ == "__main__":

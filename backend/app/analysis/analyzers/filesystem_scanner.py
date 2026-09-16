@@ -7,14 +7,13 @@ from app.analysis.base import BaseAnalyzer
 
 class FilesystemScanner(BaseAnalyzer):
     """
-    Walks a filesystem once and collects high-value forensic artifacts.
-    Generic and reusable on any volume (including nested VHDs).
+    Walks a filesystem once and collects high-value forensic artifacts,
+    including deleted files, suspicious files, and basic timestamps.
     """
 
     name = "filesystem_scanner"
-    description = "Scans a volume for investigator-relevant artifacts"
+    description = "Scans a volume for investigator-relevant artifacts (including deleted & suspicious files)"
 
-    # === Extension & name based rules ===
     VIRTUAL_DISK_EXTS = {".vhd", ".vhdx", ".vmdk"}
     EMAIL_EXTS = {".eml", ".msg", ".pst", ".ost"}
     DOCUMENT_EXTS = {".pdf", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx", ".txt", ".rtf", ".odt"}
@@ -39,6 +38,22 @@ class FilesystemScanner(BaseAnalyzer):
 
     ENCRYPTION_KEYWORDS = {
         "truecrypt", "veracrypt", "bitlocker", "crypt", "encrypted"
+    }
+
+    SUSPICIOUS_EXTENSIONS = {
+        ".exe", ".dll", ".bat", ".cmd", ".ps1", ".vbs", ".js", ".jse",
+        ".scr", ".pif", ".msi", ".com", ".hta", ".wsf", ".wsh"
+    }
+
+    SUSPICIOUS_KEYWORDS = {
+        "password", "credential", "secret", "private", "backup", "dump",
+        "mimikatz", "lazagne", "keylog", "stealer", "rat", "payload",
+        "reverse", "shell", "meterpreter", "cobalt", "beacon"
+    }
+
+    DOUBLE_EXTENSIONS = {
+        ".pdf.exe", ".doc.exe", ".docx.exe", ".xls.exe",
+        ".xlsx.exe", ".jpg.exe", ".png.exe", ".txt.exe"
     }
 
     def analyze(self, target: str = None, **kwargs) -> Dict[str, Any]:
@@ -67,8 +82,11 @@ class FilesystemScanner(BaseAnalyzer):
             "databases": [],
             "archives": [],
             "encryption_related": [],
+            "deleted_files": [],
+            "suspicious_files": [],
             "other_interesting": [],
             "total_files_scanned": 0,
+            "total_deleted_found": 0,
             "errors": [],
         }
 
@@ -95,21 +113,30 @@ class FilesystemScanner(BaseAnalyzer):
             lower_name = name.lower()
             lower_path = full_path.lower()
 
+            # Check if deleted / unallocated
+            is_deleted = False
+            try:
+                if entry.info.name.flags & pytsk3.TSK_FS_NAME_FLAG_UNALLOC:
+                    is_deleted = True
+            except Exception:
+                pass
+
             # Directory handling
             if entry.info.meta and entry.info.meta.type == pytsk3.TSK_FS_META_TYPE_DIR:
                 if lower_name in ["$recycle.bin", "recycler"]:
                     result["recycle_bin"].append({
                         "path": full_path,
                         "name": name,
-                        "type": "recycle_bin_folder"
+                        "type": "recycle_bin_folder",
+                        "deleted": is_deleted
                     })
 
-                # Jump Lists folders
                 if "automaticdestinations" in lower_path or "customdestinations" in lower_path:
                     result["jump_lists"].append({
                         "path": full_path,
                         "name": name,
-                        "type": "jump_list_folder"
+                        "type": "jump_list_folder",
+                        "deleted": is_deleted
                     })
 
                 try:
@@ -120,82 +147,118 @@ class FilesystemScanner(BaseAnalyzer):
                 continue
 
             # File handling
-            self._categorize_file(full_path, name, lower_name, lower_path, entry, result)
+            self._categorize_file(
+                full_path, name, lower_name, lower_path,
+                entry, result, is_deleted
+            )
 
-    def _categorize_file(self, full_path, name, lower_name, lower_path, entry, result):
+    def _categorize_file(self, full_path, name, lower_name, lower_path, entry, result, is_deleted):
         ext = PureWindowsPath(name).suffix.lower()
         size = entry.info.meta.size if entry.info.meta else 0
+
+        # Extract timestamps
+        created = modified = accessed = None
+        try:
+            if entry.info.meta:
+                if entry.info.meta.crtime:
+                    created = entry.info.meta.crtime
+                if entry.info.meta.mtime:
+                    modified = entry.info.meta.mtime
+                if entry.info.meta.atime:
+                    accessed = entry.info.meta.atime
+        except Exception:
+            pass
 
         file_info = {
             "path": full_path,
             "name": name,
             "size": size,
+            "deleted": is_deleted,
+            "created": created,
+            "modified": modified,
+            "accessed": accessed,
         }
 
-        # Virtual Disks
+        if is_deleted:
+            result["deleted_files"].append(file_info)
+            result["total_deleted_found"] += 1
+
+        # === Suspicious file detection ===
+        is_suspicious = False
+        reasons = []
+
+        if any(full_path.lower().endswith(de) for de in self.DOUBLE_EXTENSIONS):
+            is_suspicious = True
+            reasons.append("double_extension")
+
+        if any(k in lower_name for k in self.SUSPICIOUS_KEYWORDS):
+            is_suspicious = True
+            reasons.append("suspicious_keyword")
+
+        unusual_locations = [
+            "\\users\\", "\\documents\\", "\\downloads\\",
+            "\\desktop\\", "\\temp\\", "\\tmp\\", "\\recycle"
+        ]
+        if ext in self.SUSPICIOUS_EXTENSIONS and any(loc in lower_path for loc in unusual_locations):
+            is_suspicious = True
+            reasons.append("executable_in_user_location")
+
+        if any(k in lower_name for k in self.ENCRYPTION_KEYWORDS):
+            is_suspicious = True
+            reasons.append("encryption_related")
+            result["encryption_related"].append(file_info)
+
+        if is_suspicious:
+            suspicious_info = file_info.copy()
+            suspicious_info["reasons"] = reasons
+            result["suspicious_files"].append(suspicious_info)
+
+        # === Normal categorization ===
         if ext in self.VIRTUAL_DISK_EXTS:
             result["virtual_disks"].append(file_info)
             return
 
-        # Emails
         if ext in self.EMAIL_EXTS:
             result["emails"].append(file_info)
             return
 
-        # Documents
         if ext in self.DOCUMENT_EXTS:
             result["documents"].append(file_info)
             return
 
-        # Images
         if ext in self.IMAGE_EXTS:
             result["images"].append(file_info)
             return
 
-        # Event Logs
         if ext in self.EVENTLOG_EXTS:
             result["event_logs"].append(file_info)
             return
 
-        # Prefetch
         if ext in self.PREFETCH_EXTS:
             result["prefetch"].append(file_info)
             return
 
-        # LNK files
         if ext in self.LNK_EXTS:
             result["lnk_files"].append(file_info)
             return
 
-        # Archives
         if ext in self.ARCHIVE_EXTS:
             result["archives"].append(file_info)
             return
 
-        # Executables
         if ext in self.EXECUTABLE_EXTS:
             result["executables"].append(file_info)
             return
 
-        # Databases
         if ext in self.DATABASE_EXTS:
             result["databases"].append(file_info)
             return
 
-        # Registry Hives
         if lower_name in self.REGISTRY_NAMES or any(h in lower_name for h in self.REGISTRY_NAMES):
             result["registry_hives"].append(file_info)
             return
 
-        # Browser artifacts
-        if any(b in lower_name for b in self.BROWSER_FILES) or "chrome" in lower_path or "firefox" in lower_path or "edge" in lower_path:
+        if any(b in lower_name for b in self.BROWSER_FILES) or \
+           "chrome" in lower_path or "firefox" in lower_path or "edge" in lower_path:
             result["browser_artifacts"].append(file_info)
             return
-
-        # Encryption related
-        if any(k in lower_name for k in self.ENCRYPTION_KEYWORDS):
-            result["encryption_related"].append(file_info)
-            return
-
-        # Catch interesting leftover files (optional)
-        # result["other_interesting"].append(file_info)

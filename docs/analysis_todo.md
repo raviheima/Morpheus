@@ -12,9 +12,9 @@
 - [x] Create Analysis Orchestrator (decides which analyzers to run)
 
 ## Phase 2: Core Filesystem Analysis (works for both OS and non-OS)
-- [ ] Deleted files recovery
-- [ ] Suspicious file pattern matching
-- [ ] Image / media file discovery
+- [x] Deleted files recovery
+- [x] Suspicious file pattern matching
+- [x] Image / media file discovery
 - [ ] Embedded VHD/VHDX detection + recursive analysis
 - [ ] Basic file metadata extraction
 - [ ] File hashing (already partially done)
