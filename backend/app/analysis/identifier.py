@@ -6,8 +6,7 @@ from app.analysis.base import BaseAnalyzer
 
 
 class EWFImgInfo(pytsk3.Img_Info):
-    """Adapter that lets pytsk3 read E01/EWF files."""
-
+    """Adapter for E01/EWF files."""
     def __init__(self, ewf_handle):
         self._ewf_handle = ewf_handle
         super().__init__(url="", type=pytsk3.TSK_IMG_TYPE_EXTERNAL)
@@ -23,15 +22,24 @@ class EWFImgInfo(pytsk3.Img_Info):
         return self._ewf_handle.get_media_size()
 
 
-class DataSourceIdentifier(BaseAnalyzer):
-    """
-    Identifies the data source:
-    - Image type (E01, raw, etc.)
-    - Partition scheme
-    - Volumes + filesystems
-    - Simple OS vs Data-drive heuristic
-    """
+class VHDIImgInfo(pytsk3.Img_Info):
+    """Adapter for VHD/VHDX files using libvhdi."""
+    def __init__(self, vhdi_file):
+        self._vhdi_file = vhdi_file
+        super().__init__(url="", type=pytsk3.TSK_IMG_TYPE_EXTERNAL)
 
+    def close(self):
+        self._vhdi_file.close()
+
+    def read(self, offset, size):
+        self._vhdi_file.seek_offset(offset)
+        return self._vhdi_file.read_buffer(size)
+
+    def get_size(self):
+        return self._vhdi_file.get_media_size()
+
+
+class DataSourceIdentifier(BaseAnalyzer):
     name = "data_source_identifier"
     description = "Identifies image type, volumes, filesystems and OS likelihood"
 
@@ -55,6 +63,7 @@ class DataSourceIdentifier(BaseAnalyzer):
         try:
             img_info = self._open_image(path)
 
+            # Try partition table first
             try:
                 volume_info = pytsk3.Volume_Info(img_info)
                 result["partition_scheme"] = self._get_partition_scheme(volume_info)
@@ -63,7 +72,6 @@ class DataSourceIdentifier(BaseAnalyzer):
                     desc = part.desc.decode("utf-8", errors="ignore")
                     desc_lower = desc.lower()
 
-                    # Skip pure metadata partitions
                     if any(x in desc_lower for x in [
                         "unallocated", "primary table", "safety table",
                         "gpt header", "partition table"
@@ -79,33 +87,19 @@ class DataSourceIdentifier(BaseAnalyzer):
                         "filesystem": "Unknown",
                     }
 
-                    # Try to detect filesystem
                     try:
                         fs = pytsk3.FS_Info(img_info, offset=part.start * 512)
-                        ftype = fs.info.ftype
-
-                        # Map pytsk3 numeric types to readable names
-                        fs_map = {
-                            pytsk3.TSK_FS_TYPE_NTFS: "NTFS",
-                            pytsk3.TSK_FS_TYPE_FAT12: "FAT12",
-                            pytsk3.TSK_FS_TYPE_FAT16: "FAT16",
-                            pytsk3.TSK_FS_TYPE_FAT32: "FAT32",
-                            pytsk3.TSK_FS_TYPE_EXFAT: "exFAT",
-                            pytsk3.TSK_FS_TYPE_EXT2: "EXT2",
-                            pytsk3.TSK_FS_TYPE_EXT3: "EXT3",
-                            pytsk3.TSK_FS_TYPE_EXT4: "EXT4",
-                            pytsk3.TSK_FS_TYPE_ISO9660: "ISO9660",
-                            pytsk3.TSK_FS_TYPE_HFS: "HFS",
-                            pytsk3.TSK_FS_TYPE_APFS: "APFS",
-                        }
-                        volume["filesystem"] = fs_map.get(ftype, str(ftype))
+                        volume["filesystem"] = self._fs_type_to_name(fs.info.ftype)
                     except Exception:
-                        volume["filesystem"] = "Unknown"
+                        pass
 
                     result["volumes"].append(volume)
 
-            except Exception as vol_err:
-                # Some images have no partition table (single filesystem)
+            except Exception:
+                pass
+
+            # Fallback: single filesystem
+            if not result["volumes"]:
                 try:
                     fs = pytsk3.FS_Info(img_info)
                     result["volumes"].append({
@@ -114,10 +108,11 @@ class DataSourceIdentifier(BaseAnalyzer):
                         "start_sector": 0,
                         "length_sectors": None,
                         "size_bytes": result["file_size"],
-                        "filesystem": str(fs.info.ftype),
+                        "filesystem": self._fs_type_to_name(fs.info.ftype),
                     })
-                except Exception:
-                    result["error"] = str(vol_err)
+                    result["partition_scheme"] = "None (single filesystem)"
+                except Exception as e:
+                    result["error"] = f"Could not open as volume or filesystem: {e}"
 
             result["is_operating_system"] = self._looks_like_os(result["volumes"])
             result["summary"] = self._generate_summary(result)
@@ -129,9 +124,9 @@ class DataSourceIdentifier(BaseAnalyzer):
         return result
 
     def _open_image(self, path: Path):
-        """Open E01 or raw image."""
         name = path.name.lower()
 
+        # E01 / EWF
         if name.endswith((".e01", ".ex01", ".s01")):
             import pyewf
             filenames = pyewf.glob(str(path))
@@ -139,6 +134,14 @@ class DataSourceIdentifier(BaseAnalyzer):
             ewf_handle.open(filenames)
             return EWFImgInfo(ewf_handle)
 
+        # VHD / VHDX
+        if name.endswith((".vhd", ".vhdx")):
+            import pyvhdi
+            vhdi_file = pyvhdi.file()
+            vhdi_file.open(str(path))
+            return VHDIImgInfo(vhdi_file)
+
+        # Raw / dd / img
         return pytsk3.Img_Info(str(path))
 
     def _detect_image_type(self, path: Path) -> str:
@@ -155,7 +158,6 @@ class DataSourceIdentifier(BaseAnalyzer):
 
     def _get_partition_scheme(self, volume_info) -> str:
         try:
-            # pytsk3 exposes the partition table type
             ptype = volume_info.info.vstype
             mapping = {
                 pytsk3.TSK_VS_TYPE_DOS: "MBR (DOS)",
@@ -167,10 +169,21 @@ class DataSourceIdentifier(BaseAnalyzer):
         except Exception:
             return "Unknown"
 
-
-
-
-
+    def _fs_type_to_name(self, ftype) -> str:
+        fs_map = {
+            pytsk3.TSK_FS_TYPE_NTFS: "NTFS",
+            pytsk3.TSK_FS_TYPE_FAT12: "FAT12",
+            pytsk3.TSK_FS_TYPE_FAT16: "FAT16",
+            pytsk3.TSK_FS_TYPE_FAT32: "FAT32",
+            pytsk3.TSK_FS_TYPE_EXFAT: "exFAT",
+            pytsk3.TSK_FS_TYPE_EXT2: "EXT2",
+            pytsk3.TSK_FS_TYPE_EXT3: "EXT3",
+            pytsk3.TSK_FS_TYPE_EXT4: "EXT4",
+            pytsk3.TSK_FS_TYPE_ISO9660: "ISO9660",
+            pytsk3.TSK_FS_TYPE_HFS: "HFS",
+            pytsk3.TSK_FS_TYPE_APFS: "APFS",
+        }
+        return fs_map.get(ftype, str(ftype))
 
     def _looks_like_os(self, volumes: List[Dict]) -> bool:
         for vol in volumes:
