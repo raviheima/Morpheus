@@ -6,3 +6,4 @@ uvicorn
 python-multipart
 pydantic
 pytsk3
+libewf-python
