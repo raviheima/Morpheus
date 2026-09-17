@@ -4,7 +4,6 @@ from app.analysis.orchestrator import AnalysisOrchestrator
 def print_scan(scan, indent="  "):
     if not scan:
         return
-
     print(f"{indent}Files scanned     : {scan.get('total_files_scanned', 0)}")
     print(f"{indent}Deleted files     : {scan.get('total_deleted_found', 0)}")
     print(f"{indent}Suspicious files  : {len(scan.get('suspicious_files', []))}")
@@ -18,13 +17,37 @@ def print_scan(scan, indent="  "):
     print(f"{indent}LNK files         : {len(scan.get('lnk_files', []))}")
     print(f"{indent}Executables       : {len(scan.get('executables', []))}")
 
-    # Show a few suspicious files with reasons
     suspicious = scan.get("suspicious_files", [])
     if suspicious:
         print(f"{indent}--- Sample Suspicious Files ---")
-        for item in suspicious[:5]:  # show only first 5
+        for item in suspicious[:5]:
             reasons = ", ".join(item.get("reasons", []))
             print(f"{indent}  • {item['path']}  [{reasons}]")
+
+
+def print_browser_analysis(browser, indent="  "):
+    if not browser:
+        return
+
+    print(f"{indent}Browser Analysis:")
+    print(f"{indent}  Chrome/Edge histories : {len(browser.get('chrome_edge', []))}")
+    print(f"{indent}  Firefox artifacts     : {len(browser.get('firefox', []))}")
+    print(f"{indent}  Internet Explorer     : {len(browser.get('internet_explorer', []))}")
+    print(f"{indent}  Total history entries : {browser.get('total_entries', 0)}")
+
+    # Show IE artifacts
+    ie_items = browser.get("internet_explorer", [])
+    if ie_items:
+        print(f"{indent}  --- IE History Files ---")
+        for item in ie_items:
+            print(f"{indent}    → {item.get('source')}")
+
+    # Show Chrome/Edge if any
+    for hist in browser.get("chrome_edge", []):
+        print(f"{indent}  --- Chrome/Edge: {hist.get('source')} ---")
+        print(f"{indent}      Entries: {hist.get('count', 0)}")
+        for entry in hist.get("entries", [])[:3]:
+            print(f"{indent}      [{entry.get('visit_time')}] {entry.get('title', '')[:50]}")
 
 
 def main():
@@ -59,6 +82,10 @@ def main():
         if vol.get("scanned") and vol.get("scan_result"):
             print_scan(vol["scan_result"], indent="   ")
 
+        # Show browser analysis if available
+        if vol.get("browser_analysis"):
+            print_browser_analysis(vol["browser_analysis"], indent="   ")
+
     # --- Nested VHDs ---
     print("\n" + "-"*65)
     print("NESTED VIRTUAL DISKS")
@@ -83,17 +110,18 @@ def main():
     print("\n" + "="*65)
     print("FINAL SUMMARY")
     print("="*65)
-    print(f"Volumes found        : {summary['total_volumes_found']}")
-    print(f"Volumes scanned      : {summary['total_volumes_scanned']}")
-    print(f"Nested VHDs          : {summary['nested_vhds']}")
-    print(f"Total files scanned  : {summary['total_files_scanned']}")
-    print(f"Emails               : {summary['total_emails']}")
-    print(f"Documents            : {summary['total_documents']}")
-    print(f"Images               : {summary['total_images']}")
-    print(f"Registry hives       : {summary['total_registry_hives']}")
-    print(f"Event logs           : {summary['total_event_logs']}")
-    print(f"Browser artifacts    : {summary['total_browser_artifacts']}")
-    print(f"Deleted files        : {sum(vol.get('scan_result', {}).get('total_deleted_found', 0) for vol in report['volume_scans'] if vol.get('scanned'))}")
+    print(f"Volumes found              : {summary['total_volumes_found']}")
+    print(f"Volumes scanned            : {summary['total_volumes_scanned']}")
+    print(f"Nested VHDs                : {summary['nested_vhds']}")
+    print(f"Total files scanned        : {summary['total_files_scanned']}")
+    print(f"Emails                     : {summary['total_emails']}")
+    print(f"Documents                  : {summary['total_documents']}")
+    print(f"Images                     : {summary['total_images']}")
+    print(f"Registry hives             : {summary['total_registry_hives']}")
+    print(f"Event logs                 : {summary['total_event_logs']}")
+    print(f"Browser artifacts          : {summary['total_browser_artifacts']}")
+    print(f"Browser history entries    : {summary.get('total_browser_history_entries', 0)}")
+    print(f"Deleted files              : {summary.get('total_deleted_found', 'N/A')}")
 
 
 if __name__ == "__main__":

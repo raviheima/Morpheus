@@ -258,7 +258,33 @@ class FilesystemScanner(BaseAnalyzer):
             result["registry_hives"].append(file_info)
             return
 
-        if any(b in lower_name for b in self.BROWSER_FILES) or \
-           "chrome" in lower_path or "firefox" in lower_path or "edge" in lower_path:
+        # === Browser Artifacts (more precise) ===
+        is_browser_artifact = False
+
+        # Chrome / Edge History database
+        if lower_name == "history" and ("chrome" in lower_path or "edge" in lower_path or "user data" in lower_path):
+            is_browser_artifact = True
+
+        # Firefox
+        elif lower_name == "places.sqlite" and "firefox" in lower_path:
+            is_browser_artifact = True
+
+        # Internet Explorer / old Edge
+        elif any(x in lower_path for x in [
+            "temporary internet files",
+            "content.ie5",
+            "webbrowse",
+            "webcache",
+            "history.ie5",
+            "index.dat"
+        ]):
+            is_browser_artifact = True
+
+        # General browser files we already had
+        elif any(b in lower_name for b in self.BROWSER_FILES) or \
+             "chrome" in lower_path or "firefox" in lower_path or "edge" in lower_path:
+            is_browser_artifact = True
+
+        if is_browser_artifact:
             result["browser_artifacts"].append(file_info)
             return

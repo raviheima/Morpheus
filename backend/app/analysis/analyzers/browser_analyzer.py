@@ -2,71 +2,88 @@ from typing import Any, Dict, List
 import sqlite3
 import tempfile
 import os
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
+from pathlib import PureWindowsPath
 
 from app.analysis.base import BaseAnalyzer
 
 
 class BrowserAnalyzer(BaseAnalyzer):
     """
-    Parses browser history databases (Chrome / Edge).
+    Only attempts to parse browser history files we actually know how to handle:
+    - Chrome / Edge  → History (SQLite)
+    - Firefox        → places.sqlite
+    - Internet Explorer → container.dat / index.dat (listed for now)
     """
 
     name = "browser_analyzer"
-    description = "Extracts browsing history from Chrome/Edge History SQLite databases"
+    description = "Parses only known browser history formats"
 
     def analyze(self, target: str = None, **kwargs) -> Dict[str, Any]:
-        """
-        Expected kwargs:
-            - img_info
-            - offset (volume offset)
-            - history_files: list of dicts with 'path' of History files found by the scanner
-        """
         img_info = kwargs.get("img_info")
         offset = kwargs.get("offset", 0)
-        history_files = kwargs.get("history_files", [])
+        candidate_files = kwargs.get("history_files", [])
 
         result = {
-            "histories": [],
+            "chrome_edge": [],
+            "firefox": [],
+            "internet_explorer": [],
             "total_entries": 0,
             "errors": [],
+            "skipped": [],
         }
 
-        if not history_files:
-            return result
-
-        for item in history_files:
-            path_in_image = item.get("path")
-            if not path_in_image:
-                continue
+        for item in candidate_files:
+            path = item.get("path", "")
+            name = item.get("name", "").lower()
+            lower_path = path.lower()
 
             try:
-                entries = self._parse_history(img_info, offset, path_in_image)
-                result["histories"].append({
-                    "source": path_in_image,
-                    "entries": entries,
-                    "count": len(entries),
-                })
-                result["total_entries"] += len(entries)
+                # Chrome / Edge History (SQLite)
+                if name == "history" and ("chrome" in lower_path or "edge" in lower_path or "user data" in lower_path):
+                    entries = self._parse_chrome_history(img_info, offset, path)
+                    result["chrome_edge"].append({
+                        "source": path,
+                        "entries": entries,
+                        "count": len(entries),
+                    })
+                    result["total_entries"] += len(entries)
+
+                # Firefox
+                elif name == "places.sqlite":
+                    result["firefox"].append({
+                        "source": path,
+                        "note": "Firefox places.sqlite detected (parser not yet implemented)",
+                        "size": item.get("size"),
+                    })
+
+                # Internet Explorer
+                elif name in ["container.dat", "index.dat"] or "history.ie5" in lower_path:
+                    result["internet_explorer"].append({
+                        "source": path,
+                        "note": "Internet Explorer history artifact detected",
+                        "size": item.get("size"),
+                    })
+
+                else:
+                    # Not a format we can parse → skip
+                    result["skipped"].append(path)
+
             except Exception as e:
-                result["errors"].append(f"{path_in_image}: {str(e)}")
+                result["errors"].append(f"{path}: {str(e)}")
 
         return result
 
-    def _parse_history(self, img_info, offset: int, path_in_image: str) -> List[Dict]:
-        """Extract a History file from the image and parse it."""
+    def _parse_chrome_history(self, img_info, offset: int, path_in_image: str) -> List[Dict]:
         import pytsk3
 
         fs = pytsk3.FS_Info(img_info, offset=offset)
-
-        # Normalize path for TSK
         tsk_path = path_in_image.replace("\\", "/")
         if not tsk_path.startswith("/"):
             tsk_path = "/" + tsk_path
 
         file_obj = fs.open(path=tsk_path)
 
-        # Write to temporary file
         tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".db")
         tmp_path = tmp.name
         tmp.close()
@@ -84,20 +101,17 @@ class BrowserAnalyzer(BaseAnalyzer):
                     out.write(data)
                     offset_read += len(data)
 
-            return self._query_history_db(tmp_path)
+            return self._query_chrome_db(tmp_path)
 
         finally:
             if os.path.exists(tmp_path):
                 os.remove(tmp_path)
 
-    def _query_history_db(self, db_path: str) -> List[Dict]:
-        """Query the Chrome/Edge History SQLite database."""
+    def _query_chrome_db(self, db_path: str) -> List[Dict]:
         entries = []
-
         conn = sqlite3.connect(db_path)
         cursor = conn.cursor()
 
-        # Chrome/Edge stores time as microseconds since 1601-01-01
         query = """
             SELECT
                 urls.url,
@@ -115,11 +129,8 @@ class BrowserAnalyzer(BaseAnalyzer):
             rows = cursor.fetchall()
 
             for url, title, visit_count, visit_time in rows:
-                # Convert Chrome timestamp to readable format
                 try:
-                    # Chrome epoch: 1601-01-01
-                    timestamp = datetime(1601, 1, 1, tzinfo=timezone.utc) + \
-                                __import__("datetime").timedelta(microseconds=visit_time)
+                    timestamp = datetime(1601, 1, 1, tzinfo=timezone.utc) + timedelta(microseconds=visit_time)
                     time_str = timestamp.strftime("%Y-%m-%d %H:%M:%S UTC")
                 except Exception:
                     time_str = str(visit_time)
@@ -130,9 +141,6 @@ class BrowserAnalyzer(BaseAnalyzer):
                     "visit_count": visit_count,
                     "visit_time": time_str,
                 })
-
-        except Exception as e:
-            raise Exception(f"SQLite query failed: {e}")
         finally:
             conn.close()
 

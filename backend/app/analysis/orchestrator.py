@@ -6,6 +6,7 @@ import pytsk3
 from app.analysis.identifier import DataSourceIdentifier, EWFImgInfo, VHDIImgInfo
 from app.analysis.analyzers.filesystem_scanner import FilesystemScanner
 from app.analysis.analyzers.virtual_disk_handler import VirtualDiskHandler
+from app.analysis.analyzers.browser_analyzer import BrowserAnalyzer
 
 
 class AnalysisOrchestrator:
@@ -18,6 +19,7 @@ class AnalysisOrchestrator:
         self.identifier = DataSourceIdentifier()
         self.scanner = FilesystemScanner()
         self.vhd_handler = VirtualDiskHandler()
+        self.browser_analyzer = BrowserAnalyzer()
 
     def analyze(self, target: str) -> Dict[str, Any]:
         path = Path(target)
@@ -53,6 +55,7 @@ class AnalysisOrchestrator:
                     "size_bytes": vol.get("size_bytes"),
                     "scanned": False,
                     "scan_result": None,
+                    "browser_analysis": None,
                     "note": None,
                 }
 
@@ -72,9 +75,21 @@ class AnalysisOrchestrator:
                     )
                     vol_entry["scanned"] = True
                     vol_entry["scan_result"] = scan
+
+                    # Run browser analysis if we found browser artifacts
+                    browser_files = scan.get("browser_artifacts", [])
+                    if browser_files:
+                        print(f"[+] Running browser analysis ({len(browser_files)} artifacts)")
+                        browser_result = self.browser_analyzer.analyze(
+                            img_info=img_info,
+                            offset=offset,
+                            history_files=browser_files
+                        )
+                        vol_entry["browser_analysis"] = browser_result
+
                     report["volume_scans"].append(vol_entry)
 
-                    # Handle nested virtual disks (only once)
+                    # Handle nested virtual disks
                     for vhd in scan.get("virtual_disks", []):
                         print(f"[+] Found nested VHD: {vhd['path']}")
                         vhd_result = self.vhd_handler.analyze(
@@ -125,6 +140,7 @@ class AnalysisOrchestrator:
             "total_registry_hives": 0,
             "total_event_logs": 0,
             "total_browser_artifacts": 0,
+            "total_browser_history_entries": 0,
         }
 
         for vol in report["volume_scans"]:
@@ -141,6 +157,10 @@ class AnalysisOrchestrator:
             summary["total_registry_hives"] += len(scan.get("registry_hives", []))
             summary["total_event_logs"] += len(scan.get("event_logs", []))
             summary["total_browser_artifacts"] += len(scan.get("browser_artifacts", []))
+
+            # Browser analysis results
+            browser = vol.get("browser_analysis") or {}
+            summary["total_browser_history_entries"] += browser.get("total_entries", 0)
 
         # Nested VHDs
         for vhd in report["nested_virtual_disks"]:

@@ -15,8 +15,8 @@
 - [x] Deleted files recovery
 - [x] Suspicious file pattern matching
 - [x] Image / media file discovery
-- [ ] Embedded VHD/VHDX detection + recursive analysis
-- [ ] Basic file metadata extraction
+- [x] Embedded VHD/VHDX detection + recursive analysis
+- [x] Basic file metadata extraction
 - [ ] File hashing (already partially done)
 
 ## Phase 3: Operating System Specific Analysis
