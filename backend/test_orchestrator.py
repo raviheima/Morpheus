@@ -61,30 +61,46 @@ def print_browser_analysis(browser, indent="  "):
             if note:
                 print(f"{indent}      note: {note}")
 
-            # Show actual history entries (up to 10)
             entries = item.get("entries", [])
-            if entries and cnt > 0:
-                print(f"{indent}      --- Sample entries ---")
-                for entry in entries[:10]:
-                    # Try every possible timestamp field
-                    ts = (
-                        entry.get("last_accessed")
-                        or entry.get("visit_time")
-                        or entry.get("last_modified")
-                        or entry.get("accessed")
-                        or ""
-                    )
-                    url = entry.get("url", "")[:90]
-                    count = entry.get("access_count") or entry.get("visit_count") or ""
-                    extra = f" (hits: {count})" if count else ""
-                    print(f"{indent}        [{ts}]{extra} {url}")
+            if not entries or cnt == 0:
+                continue
+
+            # Prefer real history (WebCache) and show more samples
+            print(f"{indent}      --- Sample entries ---")
+
+            # Sort: entries with timestamps first, then by most recent
+            def sort_key(e):
+                ts = e.get("last_accessed") or e.get("last_modified") or ""
+                return (0 if ts else 1, ts)
+
+            sorted_entries = sorted(entries, key=sort_key, reverse=True)
+
+            for entry in sorted_entries[:15]:
+                ts = (
+                    entry.get("last_accessed")
+                    or entry.get("visit_time")
+                    or entry.get("last_modified")
+                    or entry.get("accessed")
+                    or "no-timestamp"
+                )
+                url = entry.get("url", "")
+                count = entry.get("access_count") or entry.get("visit_count") or 0
+
+                # Truncate long URLs cleanly
+                display_url = url if len(url) <= 100 else url[:97] + "..."
+
+                print(f"{indent}        [{ts}]  hits={count:<4}  {display_url}")
 
     # Chrome/Edge
     for hist in browser.get("chrome_edge", []):
         print(f"{indent}  --- Chrome/Edge: {hist.get('source')} ---")
         print(f"{indent}      Entries: {hist.get('count', 0)}")
-        for entry in hist.get("entries", [])[:5]:
-            print(f"{indent}      [{entry.get('visit_time')}] {entry.get('title', '')[:60]}")
+        for entry in hist.get("entries", [])[:8]:
+            ts = entry.get("visit_time") or "no-timestamp"
+            title = (entry.get("title") or "")[:50]
+            url = (entry.get("url") or "")[:70]
+            hits = entry.get("visit_count", 0)
+            print(f"{indent}        [{ts}]  hits={hits:<4}  {title}  |  {url}")
 def main():
     evidence = "/home/m4d_5c13nt15t/Documents/E01-Downloaded-by-me/2020JimmyWilson.E01"
 

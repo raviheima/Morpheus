@@ -134,6 +134,7 @@ class AnalysisOrchestrator:
             "total_volumes_scanned": 0,
             "nested_vhds": len(report["nested_virtual_disks"]),
             "total_files_scanned": 0,
+            "total_deleted_found": 0,
             "total_emails": 0,
             "total_documents": 0,
             "total_images": 0,
@@ -151,6 +152,7 @@ class AnalysisOrchestrator:
             scan = vol.get("scan_result") or {}
 
             summary["total_files_scanned"] += scan.get("total_files_scanned", 0)
+            summary["total_deleted_found"] += scan.get("total_deleted_found", 0)
             summary["total_emails"] += len(scan.get("emails", []))
             summary["total_documents"] += len(scan.get("documents", []))
             summary["total_images"] += len(scan.get("images", []))
@@ -166,6 +168,7 @@ class AnalysisOrchestrator:
         for vhd in report["nested_virtual_disks"]:
             for scan in vhd.get("scans", []):
                 summary["total_files_scanned"] += scan.get("total_files_scanned", 0)
+                summary["total_deleted_found"] += scan.get("total_deleted_found", 0)
                 summary["total_emails"] += len(scan.get("emails", []))
                 summary["total_documents"] += len(scan.get("documents", []))
                 summary["total_images"] += len(scan.get("images", []))

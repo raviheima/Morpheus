@@ -17,7 +17,7 @@ class BrowserAnalyzer(BaseAnalyzer):
     - Firefox                → places.sqlite (noted for now)
     - Internet Explorer:
         • classic index.dat  → pure-Python parser
-        • container.dat      → residual string extraction
+        • container.dat      → skipped (placeholder on IE10+)
         • WebCacheV*.dat     → full history via pyesedb (ESE)
     """
 
@@ -95,20 +95,10 @@ class BrowserAnalyzer(BaseAnalyzer):
                             f"Extracted {len(entries)} history entries from {path}"
                         )
 
-                # container.dat (usually empty placeholder)
+                # container.dat is a near-always-empty IE10+ placeholder now
+                # that WebCacheV*.dat parsing works — skip it entirely.
                 elif name == "container.dat" or "history.ie5" in lower_path:
-                    entries = self._parse_container_dat(img_info, offset, path, size)
-                    result["internet_explorer"].append({
-                        "source": path,
-                        "type": "container.dat",
-                        "entries": entries,
-                        "count": len(entries),
-                        "note": (
-                            "container.dat is often a zero-byte placeholder on IE10+. "
-                            "Real history is in WebCacheV*.dat."
-                        ),
-                    })
-                    result["total_entries"] += len(entries)
+                    result["skipped"].append(path)
 
                 else:
                     result["skipped"].append(path)
@@ -304,7 +294,7 @@ class BrowserAnalyzer(BaseAnalyzer):
         return unique[:100]
 
     # ------------------------------------------------------------------
-    # WebCacheV*.dat via pyesedb  ← the new important part
+    # WebCacheV*.dat via pyesedb
     # ------------------------------------------------------------------
     def _parse_webcache(self, img_info, offset: int, path_in_image: str) -> List[Dict]:
         try:
@@ -352,8 +342,6 @@ class BrowserAnalyzer(BaseAnalyzer):
                     os.remove(tmp_path)
                 except Exception:
                     pass
-
-
 
     def _extract_webcache_history(self, db_path: str) -> List[Dict]:
         """Parse History / MSHist containers from WebCacheV*.dat using known schema."""
@@ -406,7 +394,6 @@ class BrowserAnalyzer(BaseAnalyzer):
                         f"id={container_id} name='{name}' dir='{str(directory)[:50]}'"
                     )
 
-                    # History + daily MSHist containers
                     if (
                         name_l == "history"
                         or name_l.startswith("mshist")
@@ -436,22 +423,38 @@ class BrowserAnalyzer(BaseAnalyzer):
                     num_recs = table.get_number_of_records()
                     diagnostics.append(f"{table_name} has {num_recs} records")
 
+                    column_names = self._get_table_column_names(table)
+                    time_columns = [
+                        (idx, cname) for idx, cname in enumerate(column_names)
+                        if cname and "time" in cname.lower()
+                    ]
+                    url_columns = [
+                        (idx, cname) for idx, cname in enumerate(column_names)
+                        if cname and cname.lower() == "url"
+                    ]
+                    if j_debug := (num_recs > 0):
+                        diagnostics.append(
+                            f"{table_name} columns: {column_names}"
+                        )
+
                     for j in range(num_recs):
                         try:
                             rec = table.get_record(j)
 
-                            # Temporary debug – first 3 records only
-                            if j < 3:
-                                print("DEBUG RECORD:", self._debug_webcache_record(rec))
-
-                            # ---- URL (column 17, frequently a long value) ----
-                            url = (
-                                self._get_ese_long_value(rec, "Url")
-                                or self._get_ese_long_value(rec, "URL")
-                                or self._get_ese_value(rec, "Url")
-                                or self._get_ese_value(rec, "URL")
-                                or self._get_ese_value(rec, 17)
-                            )
+                            # ---- URL ----
+                            url = None
+                            for idx, cname in url_columns:
+                                url = (
+                                    self._get_ese_long_value(rec, cname)
+                                    or self._get_ese_value(rec, idx)
+                                )
+                                if url:
+                                    break
+                            if not url:
+                                url = (
+                                    self._get_ese_long_value(rec, "Url")
+                                    or self._get_ese_value(rec, 17)
+                                )
 
                             if not url or not isinstance(url, str) or len(url) < 8:
                                 continue
@@ -460,33 +463,35 @@ class BrowserAnalyzer(BaseAnalyzer):
                             if not url or len(url) < 8:
                                 continue
 
-                            # ---- Timestamps (authoritative indices) ----
-                            # 13 = AccessedTime, 12 = ModifiedTime, 9 = SyncTime, 10 = CreationTime
-                            accessed = (
-                                self._get_ese_filetime(rec, "AccessedTime")
-                                or self._get_ese_filetime(rec, 13)
-                                or self._get_ese_filetime(rec, "SyncTime")
-                                or self._get_ese_filetime(rec, 9)
-                            )
+                            # ---- Timestamps ----
+                            accessed = ""
+                            modified = ""
+                            for idx, cname in time_columns:
+                                cname_l = cname.lower()
+                                ts = self._get_ese_filetime(rec, idx)
+                                if not ts:
+                                    continue
+                                if "access" in cname_l and not accessed:
+                                    accessed = ts
+                                elif "modif" in cname_l and not modified:
+                                    modified = ts
+                                elif "sync" in cname_l and not accessed:
+                                    accessed = ts
+                                elif "creat" in cname_l and not modified:
+                                    modified = ts
+                                elif not accessed:
+                                    accessed = ts
+                                elif not modified:
+                                    modified = ts
 
-                            modified = (
-                                self._get_ese_filetime(rec, "ModifiedTime")
-                                or self._get_ese_filetime(rec, 12)
-                                or self._get_ese_filetime(rec, "CreationTime")
-                                or self._get_ese_filetime(rec, 10)
-                            )
-
-                            # ---- AccessCount is column 8 (Flags is 7 → 0x200001) ----
-                            access_count = (
-                                self._get_ese_value(rec, "AccessCount", as_int=True)
-                                or self._get_ese_value(rec, 8, as_int=True)
-                            )
+                            # ---- AccessCount ----
+                            access_count = self._get_ese_access_count(rec)
 
                             entries.append({
                                 "url": url,
-                                "last_accessed": accessed or "",
-                                "last_modified": modified or "",
-                                "access_count": access_count if access_count is not None else 0,
+                                "last_accessed": accessed,
+                                "last_modified": modified,
+                                "access_count": access_count,
                                 "source_type": f"WebCache Container_{cid}",
                             })
                         except Exception:
@@ -517,19 +522,37 @@ class BrowserAnalyzer(BaseAnalyzer):
     # ------------------------------------------------------------------
     # ESE helpers
     # ------------------------------------------------------------------
+    def _get_table_column_names(self, table) -> List[Optional[str]]:
+        """Return the real column names for an ESE table, in column order."""
+        names: List[Optional[str]] = []
+        try:
+            num_cols = table.get_number_of_columns()
+        except Exception:
+            return names
+        for i in range(num_cols):
+            try:
+                col = table.get_column(i)
+                names.append(col.get_name())
+            except Exception:
+                names.append(None)
+        return names
+
     def _clean_webcache_url(self, raw: str) -> str:
         """Strip Visited: prefixes, user@, and MSHist date-range prefixes."""
-        url = raw.strip()
+        url = raw.strip().rstrip("\x00")
 
-        # "Visited: username@http://..."
+        # MSHist form often starts with ":2014021020140217: Jimmy Wilson@https://..."
+        m = re.match(r"^:?\d{8,16}:\s*", url)
+        if m:
+            url = url[m.end():].strip()
+
+        # "Visited: username@http..." or just "username@http..."
         if "@" in url and any(p in url.lower() for p in ("http://", "https://", "file://", "ftp://")):
             url = url.split("@", 1)[-1]
 
-        # Leading "Visited:"
         if url.lower().startswith("visited:"):
             url = url.split(":", 1)[-1].strip()
 
-        # MSHist style: "2014021020140217: http://..." or similar date range prefix
         m = re.match(r"^\d{8,16}:\s*(https?://.+|file://.+|ftp://.+)", url, re.IGNORECASE)
         if m:
             url = m.group(1)
@@ -540,7 +563,7 @@ class BrowserAnalyzer(BaseAnalyzer):
         return url
 
     def _debug_webcache_record(self, record, max_cols: int = 22) -> str:
-        """Temporary helper – dump raw column values (with FILETIME detection)."""
+        """Dump raw column values (with FILETIME detection) for debugging."""
         info = []
         for i in range(max_cols):
             try:
@@ -570,6 +593,31 @@ class BrowserAnalyzer(BaseAnalyzer):
             except Exception:
                 continue
         return " | ".join(info)
+
+    def _get_ese_access_count(self, record) -> int:
+        """Read AccessCount robustly as unsigned integer."""
+        try:
+            try:
+                v = record.get_value_data_as_integer_by_name("AccessCount")
+                if v is not None and v >= 0:
+                    return int(v)
+            except Exception:
+                pass
+            try:
+                v = record.get_value_data_as_integer(8)
+                if v is not None and v >= 0:
+                    return int(v)
+            except Exception:
+                pass
+            try:
+                raw = record.get_value_data(8)
+                if isinstance(raw, bytes) and len(raw) >= 1:
+                    return int.from_bytes(raw[:4] if len(raw) >= 4 else raw, "little")
+            except Exception:
+                pass
+        except Exception:
+            pass
+        return 0
 
     def _get_ese_value(self, record, key, as_int: bool = False) -> Optional[Any]:
         try:
@@ -629,24 +677,33 @@ class BrowserAnalyzer(BaseAnalyzer):
             return None
 
     def _get_ese_filetime(self, record, key) -> str:
+        """Robust FILETIME extractor – prefer raw 8-byte little-endian value."""
         try:
-            val = None
+            raw = None
             if isinstance(key, int):
                 try:
-                    val = record.get_value_data_as_integer(key)
-                except Exception:
                     raw = record.get_value_data(key)
-                    if isinstance(raw, bytes) and len(raw) >= 8:
-                        val = struct.unpack("<Q", raw[:8])[0]
+                except Exception:
+                    pass
             else:
                 try:
-                    val = record.get_value_data_as_integer_by_name(key)
+                    raw = record.get_value_data_by_name(key)
                 except Exception:
-                    raw = self._get_ese_value(record, key)
-                    if isinstance(raw, int):
-                        val = raw
-                    elif isinstance(raw, bytes) and len(raw) >= 8:
-                        val = struct.unpack("<Q", raw[:8])[0]
+                    pass
+
+            val = None
+            if isinstance(raw, bytes) and len(raw) >= 8:
+                val = struct.unpack("<Q", raw[:8])[0]
+            elif isinstance(raw, int):
+                val = raw
+            else:
+                try:
+                    if isinstance(key, int):
+                        val = record.get_value_data_as_integer(key)
+                    else:
+                        val = record.get_value_data_as_integer_by_name(key)
+                except Exception:
+                    return ""
 
             if not val or val < 100_000_000_000_000_000:
                 return ""
@@ -655,106 +712,3 @@ class BrowserAnalyzer(BaseAnalyzer):
             return dt.strftime("%Y-%m-%d %H:%M:%S UTC")
         except Exception:
             return ""
-    # ------------------------------------------------------------------
-    # ESE helpers
-    # ------------------------------------------------------------------
-    def _get_ese_value(self, record, key, as_int: bool = False) -> Optional[Any]:
-        try:
-            if isinstance(key, int):
-                val = record.get_value_data(key)
-            else:
-                try:
-                    val = record.get_value_data_by_name(key)
-                except Exception:
-                    return None
-            if val is None:
-                return None
-            if as_int:
-                try:
-                    if isinstance(key, int):
-                        return record.get_value_data_as_integer(key)
-                    return record.get_value_data_as_integer_by_name(key)
-                except Exception:
-                    try:
-                        return int.from_bytes(val, "little") if isinstance(val, bytes) else int(val)
-                    except Exception:
-                        return None
-            if isinstance(val, bytes):
-                try:
-                    return val.decode("utf-16-le", errors="ignore").rstrip("\x00")
-                except Exception:
-                    try:
-                        return val.decode("utf-8", errors="ignore").rstrip("\x00")
-                    except Exception:
-                        return val.hex()
-            return val
-        except Exception:
-            return None
-
-    def _get_ese_long_value(self, record, name: str) -> Optional[str]:
-        try:
-            long_val = record.get_value_data_as_long_value_by_name(name)
-            if long_val is None:
-                return None
-            data = long_val.get_data()
-            if not data:
-                return None
-            try:
-                return data.decode("utf-16-le", errors="ignore").rstrip("\x00")
-            except Exception:
-                return data.decode("utf-8", errors="ignore").rstrip("\x00")
-        except Exception:
-            return None
-
-    def _get_ese_filetime(self, record, key) -> str:
-        try:
-            raw = self._get_ese_value(record, key)
-            if raw is None:
-                return ""
-
-            if isinstance(raw, int):
-                val = raw
-            elif isinstance(raw, bytes) and len(raw) >= 8:
-                val = struct.unpack("<Q", raw[:8])[0]
-            elif isinstance(raw, str) and raw.isdigit():
-                val = int(raw)
-            else:
-                return ""
-
-            if val == 0 or val < 100000000000000000:  # too small to be a valid FILETIME
-                return ""
-
-            dt = datetime(1601, 1, 1, tzinfo=timezone.utc) + timedelta(microseconds=val // 10)
-            return dt.strftime("%Y-%m-%d %H:%M:%S UTC")
-        except Exception:
-            return ""
-
-def _debug_webcache_record(self, record, max_cols=25):
-    """Temporary helper – print raw column values for the first few records."""
-    info = []
-    for i in range(max_cols):
-        try:
-            val = record.get_value_data(i)
-            if val is None:
-                continue
-            if isinstance(val, bytes):
-                if len(val) == 8:
-                    # possible FILETIME
-                    try:
-                        ft = struct.unpack("<Q", val)[0]
-                        if 100000000000000000 < ft < 200000000000000000:
-                            dt = datetime(1601, 1, 1, tzinfo=timezone.utc) + timedelta(microseconds=ft // 10)
-                            val = f"FILETIME → {dt.strftime('%Y-%m-%d %H:%M:%S')}"
-                        else:
-                            val = val.hex()
-                    except Exception:
-                        val = val.hex()
-                else:
-                    try:
-                        val = val.decode("utf-16-le", errors="ignore").rstrip("\x00")[:80]
-                    except Exception:
-                        val = val.hex()[:40]
-            info.append(f"[{i}]={val}")
-        except Exception:
-            continue
-    return " | ".join(info)
