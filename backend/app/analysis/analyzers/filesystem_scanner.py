@@ -269,18 +269,24 @@ class FilesystemScanner(BaseAnalyzer):
         elif lower_name == "places.sqlite" and "firefox" in lower_path:
             is_browser_artifact = True
 
-        # Internet Explorer / old Edge
-        elif any(x in lower_path for x in [
+        # Classic IE index.dat
+        elif lower_name == "index.dat":
+            is_browser_artifact = True
+
+        # Modern IE container.dat + History.IE5 / Content.IE5
+        elif lower_name == "container.dat" or any(x in lower_path for x in [
             "temporary internet files",
             "content.ie5",
-            "webbrowse",
-            "webcache",
             "history.ie5",
-            "index.dat"
+            "webbrowse",
         ]):
             is_browser_artifact = True
 
-        # General browser files we already had
+        # WebCache ESE databases (the real IE10+ / Edge Legacy source)
+        elif "webcache" in lower_path and lower_name.endswith(".dat"):
+            is_browser_artifact = True
+
+        # General browser files / paths
         elif any(b in lower_name for b in self.BROWSER_FILES) or \
              "chrome" in lower_path or "firefox" in lower_path or "edge" in lower_path:
             is_browser_artifact = True

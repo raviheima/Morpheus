@@ -35,21 +35,56 @@ def print_browser_analysis(browser, indent="  "):
     print(f"{indent}  Internet Explorer     : {len(browser.get('internet_explorer', []))}")
     print(f"{indent}  Total history entries : {browser.get('total_entries', 0)}")
 
-    # Show IE artifacts
+    # Errors & notes
+    if browser.get("errors"):
+        print(f"{indent}  --- Errors ---")
+        for err in browser["errors"]:
+            print(f"{indent}    ! {err}")
+
+    if browser.get("notes"):
+        print(f"{indent}  --- Notes ---")
+        for note in browser["notes"]:
+            print(f"{indent}    * {note}")
+
+    # IE section
     ie_items = browser.get("internet_explorer", [])
     if ie_items:
         print(f"{indent}  --- IE History Files ---")
         for item in ie_items:
-            print(f"{indent}    → {item.get('source')}")
+            src = item.get("source", "")
+            typ = item.get("type", "")
+            cnt = item.get("count", 0)
+            note = item.get("note", "")
 
-    # Show Chrome/Edge if any
+            print(f"{indent}    → {src}")
+            print(f"{indent}      type={typ}  entries={cnt}")
+            if note:
+                print(f"{indent}      note: {note}")
+
+            # Show actual history entries (up to 10)
+            entries = item.get("entries", [])
+            if entries and cnt > 0:
+                print(f"{indent}      --- Sample entries ---")
+                for entry in entries[:10]:
+                    # Try every possible timestamp field
+                    ts = (
+                        entry.get("last_accessed")
+                        or entry.get("visit_time")
+                        or entry.get("last_modified")
+                        or entry.get("accessed")
+                        or ""
+                    )
+                    url = entry.get("url", "")[:90]
+                    count = entry.get("access_count") or entry.get("visit_count") or ""
+                    extra = f" (hits: {count})" if count else ""
+                    print(f"{indent}        [{ts}]{extra} {url}")
+
+    # Chrome/Edge
     for hist in browser.get("chrome_edge", []):
         print(f"{indent}  --- Chrome/Edge: {hist.get('source')} ---")
         print(f"{indent}      Entries: {hist.get('count', 0)}")
-        for entry in hist.get("entries", [])[:3]:
-            print(f"{indent}      [{entry.get('visit_time')}] {entry.get('title', '')[:50]}")
-
-
+        for entry in hist.get("entries", [])[:5]:
+            print(f"{indent}      [{entry.get('visit_time')}] {entry.get('title', '')[:60]}")
 def main():
     evidence = "/home/m4d_5c13nt15t/Documents/E01-Downloaded-by-me/2020JimmyWilson.E01"
 
