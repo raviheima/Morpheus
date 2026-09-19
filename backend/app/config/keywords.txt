@@ -1,0 +1,41 @@
+# Morpheus Forensic Keyword Configuration File
+# Edit this file to add or modify suspicious keywords, encryption keywords, and path exclusions.
+# Lines starting with '#' or empty lines are ignored.
+
+[exact_suspicious_tokens]
+# Words requiring an exact token match (prevents false positives like 'rated' -> 'rat')
+rat
+rats
+shell
+payload
+dump
+dumps
+beacon
+
+[prefix_suspicious_keywords]
+# Words matching token prefixes (e.g., 'passwords' starts with 'password')
+password
+credential
+secret
+private
+mimikatz
+lazagne
+keylog
+stealer
+meterpreter
+cobalt
+
+[encryption_keywords]
+truecrypt
+veracrypt
+bitlocker
+crypt
+encrypted
+
+[path_exclusions]
+# Lowercase path snippets that should be excluded from keyword flagging
+\windows\system32\winevt\logs\
+\appdata\local\microsoft\media player\
+\appdata\roaming\microsoft\windows\start menu\
+\windows\winsxs\
+\windows\servicing\

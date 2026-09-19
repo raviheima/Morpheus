@@ -9,3 +9,4 @@ pytsk3
 libewf-python
 libvhdi-python
 libesedb-python
+fpdf2

@@ -1,4 +1,10 @@
 from app.analysis.orchestrator import AnalysisOrchestrator
+from app.analysis.report import (
+    format_report,
+    export_report_json,
+    export_report_markdown,
+    export_report_pdf,
+)
 
 
 def print_scan(scan, indent="  "):
@@ -35,7 +41,6 @@ def print_browser_analysis(browser, indent="  "):
     print(f"{indent}  Internet Explorer     : {len(browser.get('internet_explorer', []))}")
     print(f"{indent}  Total history entries : {browser.get('total_entries', 0)}")
 
-    # Errors & notes
     if browser.get("errors"):
         print(f"{indent}  --- Errors ---")
         for err in browser["errors"]:
@@ -46,7 +51,6 @@ def print_browser_analysis(browser, indent="  "):
         for note in browser["notes"]:
             print(f"{indent}    * {note}")
 
-    # IE section
     ie_items = browser.get("internet_explorer", [])
     if ie_items:
         print(f"{indent}  --- IE History Files ---")
@@ -65,10 +69,8 @@ def print_browser_analysis(browser, indent="  "):
             if not entries or cnt == 0:
                 continue
 
-            # Prefer real history (WebCache) and show more samples
             print(f"{indent}      --- Sample entries ---")
 
-            # Sort: entries with timestamps first, then by most recent
             def sort_key(e):
                 ts = e.get("last_accessed") or e.get("last_modified") or ""
                 return (0 if ts else 1, ts)
@@ -85,13 +87,9 @@ def print_browser_analysis(browser, indent="  "):
                 )
                 url = entry.get("url", "")
                 count = entry.get("access_count") or entry.get("visit_count") or 0
-
-                # Truncate long URLs cleanly
                 display_url = url if len(url) <= 100 else url[:97] + "..."
-
                 print(f"{indent}        [{ts}]  hits={count:<4}  {display_url}")
 
-    # Chrome/Edge
     for hist in browser.get("chrome_edge", []):
         print(f"{indent}  --- Chrome/Edge: {hist.get('source')} ---")
         print(f"{indent}      Entries: {hist.get('count', 0)}")
@@ -101,11 +99,50 @@ def print_browser_analysis(browser, indent="  "):
             url = (entry.get("url") or "")[:70]
             hits = entry.get("visit_count", 0)
             print(f"{indent}        [{ts}]  hits={hits:<4}  {title}  |  {url}")
+
+
+def print_email_analysis(email_res, indent="  "):
+    if not email_res:
+        return
+
+    print(f"{indent}Email Analysis:")
+    print(f"{indent}  Emails parsed        : {email_res.get('total_emails_parsed', 0)}")
+    print(f"{indent}  Attachments found    : {email_res.get('total_attachments_found', 0)}")
+
+    parsed = email_res.get("parsed_emails", [])
+    if parsed:
+        print(f"{indent}  --- Sample Emails ---")
+        for item in parsed[:6]:
+            sender = item.get("from", "")
+            recip = item.get("to", "")
+            sub = item.get("subject", "")
+            date = item.get("date", "")
+            snippet = item.get("body_snippet", "")[:80]
+            atts = len(item.get("attachments", []))
+            att_str = f"  [attachments={atts}]" if atts > 0 else ""
+            print(f"{indent}    • [{date}]  From: {sender} → To: {recip}{att_str}")
+            print(f"{indent}       Subject: {sub}")
+            print(f"{indent}       Snippet: {snippet}...")
+
+
 def main():
+    # evidence = "/mnt/cookie/old/terry-work-usb-2009-12-11.E01"
     evidence = "/home/m4d_5c13nt15t/Documents/E01-Downloaded-by-me/2020JimmyWilson.E01"
 
     orchestrator = AnalysisOrchestrator()
     report = orchestrator.analyze(evidence)
+
+    text_report = format_report(report, include_appendix=False)
+    print("\n" + text_report)
+
+    export_report_json(report, "analysis_report_full.json", presentation_only=False)
+    export_report_json(report, "analysis_report_presentation.json", presentation_only=True)
+    export_report_markdown(report, "analysis_report.md")
+    export_report_pdf(report, "analysis_report.pdf")
+    print("\n[+] Wrote full JSON          → analysis_report_full.json")
+    print("[+] Wrote presentation JSON  → analysis_report_presentation.json")
+    print("[+] Wrote Markdown report    → analysis_report.md")
+    print("[+] Wrote PDF report         → analysis_report.pdf")
 
     print("\n" + "="*65)
     print(" FULL ANALYSIS REPORT")
@@ -137,6 +174,10 @@ def main():
         if vol.get("browser_analysis"):
             print_browser_analysis(vol["browser_analysis"], indent="   ")
 
+        # Show email analysis if available
+        if vol.get("email_analysis"):
+            print_email_analysis(vol["email_analysis"], indent="   ")
+
     # --- Nested VHDs ---
     print("\n" + "-"*65)
     print("NESTED VIRTUAL DISKS")
@@ -165,7 +206,9 @@ def main():
     print(f"Volumes scanned            : {summary['total_volumes_scanned']}")
     print(f"Nested VHDs                : {summary['nested_vhds']}")
     print(f"Total files scanned        : {summary['total_files_scanned']}")
-    print(f"Emails                     : {summary['total_emails']}")
+    print(f"Emails found               : {summary['total_emails']}")
+    print(f"Emails parsed              : {summary.get('total_emails_parsed', 0)}")
+    print(f"Email attachments          : {summary.get('total_email_attachments', 0)}")
     print(f"Documents                  : {summary['total_documents']}")
     print(f"Images                     : {summary['total_images']}")
     print(f"Registry hives             : {summary['total_registry_hives']}")

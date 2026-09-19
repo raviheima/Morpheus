@@ -1,8 +1,10 @@
+import re
 from typing import Any, Dict
 from pathlib import PureWindowsPath
 import pytsk3
 
 from app.analysis.base import BaseAnalyzer
+from app.config.keyword_loader import load_keyword_config
 
 
 class FilesystemScanner(BaseAnalyzer):
@@ -13,6 +15,14 @@ class FilesystemScanner(BaseAnalyzer):
 
     name = "filesystem_scanner"
     description = "Scans a volume for investigator-relevant artifacts (including deleted & suspicious files)"
+
+    def __init__(self, config_path=None):
+        super().__init__()
+        kw_config = load_keyword_config(config_path)
+        self.exact_suspicious_tokens = kw_config["exact_suspicious_tokens"]
+        self.prefix_suspicious_keywords = kw_config["prefix_suspicious_keywords"]
+        self.encryption_keywords = kw_config["encryption_keywords"]
+        self.path_exclusions = kw_config["path_exclusions"]
 
     VIRTUAL_DISK_EXTS = {".vhd", ".vhdx", ".vmdk"}
     EMAIL_EXTS = {".eml", ".msg", ".pst", ".ost"}
@@ -45,10 +55,13 @@ class FilesystemScanner(BaseAnalyzer):
         ".scr", ".pif", ".msi", ".com", ".hta", ".wsf", ".wsh"
     }
 
-    SUSPICIOUS_KEYWORDS = {
-        "password", "credential", "secret", "private", "backup", "dump",
-        "mimikatz", "lazagne", "keylog", "stealer", "rat", "payload",
-        "reverse", "shell", "meterpreter", "cobalt", "beacon"
+    EXACT_SUSPICIOUS_TOKENS = {
+        "rat", "rats", "shell", "payload", "dump", "dumps", "beacon"
+    }
+
+    PREFIX_SUSPICIOUS_KEYWORDS = {
+        "password", "credential", "secret", "private", "mimikatz",
+        "lazagne", "keylog", "stealer", "meterpreter", "cobalt"
     }
 
     DOUBLE_EXTENSIONS = {
@@ -191,7 +204,7 @@ class FilesystemScanner(BaseAnalyzer):
             is_suspicious = True
             reasons.append("double_extension")
 
-        if any(k in lower_name for k in self.SUSPICIOUS_KEYWORDS):
+        if self._check_suspicious_keyword(lower_name, lower_path):
             is_suspicious = True
             reasons.append("suspicious_keyword")
 
@@ -199,11 +212,22 @@ class FilesystemScanner(BaseAnalyzer):
             "\\users\\", "\\documents\\", "\\downloads\\",
             "\\desktop\\", "\\temp\\", "\\tmp\\", "\\recycle"
         ]
-        if ext in self.SUSPICIOUS_EXTENSIONS and any(loc in lower_path for loc in unusual_locations):
+        # Exclude standard browser caches/profiles for web script extensions like .js
+        is_web_cache_script = ext in {".js", ".jse"} and any(
+            bc in lower_path for bc in [
+                "\\temporary internet files\\",
+                "\\content.ie5\\",
+                "\\webcache\\",
+                "\\mozilla\\firefox\\profiles\\",
+                "\\chrome\\user data\\",
+                "\\microsoft\\edge\\user data\\"
+            ]
+        )
+        if ext in self.SUSPICIOUS_EXTENSIONS and not is_web_cache_script and any(loc in lower_path for loc in unusual_locations):
             is_suspicious = True
             reasons.append("executable_in_user_location")
 
-        if any(k in lower_name for k in self.ENCRYPTION_KEYWORDS):
+        if any(k in lower_name for k in self.encryption_keywords):
             is_suspicious = True
             reasons.append("encryption_related")
             result["encryption_related"].append(file_info)
@@ -294,3 +318,23 @@ class FilesystemScanner(BaseAnalyzer):
         if is_browser_artifact:
             result["browser_artifacts"].append(file_info)
             return
+
+    def _check_suspicious_keyword(self, lower_name: str, lower_path: str) -> bool:
+        # Exclude standard Windows system / app locations that cause noise
+        lower_name = lower_name.lower()
+        lower_path = lower_path.lower()
+        if any(exc in lower_path for exc in self.path_exclusions):
+            return False
+
+        tokens = set(re.findall(r'[a-z0-9]+', lower_name))
+
+        # Check exact token match (prevents 'rated' matching 'rat', 'operational' matching 'rat')
+        if any(t in tokens for t in self.exact_suspicious_tokens):
+            return True
+
+        # Check prefix match on tokens (e.g. 'passwords' matches 'password')
+        for t in tokens:
+            if any(t.startswith(kw) for kw in self.prefix_suspicious_keywords):
+                return True
+
+        return False

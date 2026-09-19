@@ -22,9 +22,9 @@
 ## Phase 3: Operating System Specific Analysis
 - [ ] Registry analysis (NTUSER.DAT, SYSTEM, SOFTWARE…)
 - [ ] Event Logs (EVTX) analysis
-- [ ] Browser history & search terms
+- [x] Browser history & search terms
 - [ ] Recycle Bin analysis
-- [ ] Email artifacts (.eml, Windows Mail, etc.)
+- [x] Email artifacts (.eml, Windows Mail, etc.)
 - [ ] User accounts & login information
 - [ ] Prefetch / execution artifacts
 - [ ] Encryption software detection
