@@ -8,3 +8,8 @@ __pycache__/
 CASE*
 *.zip
 *test*
+
+# Generated analysis and evidence exports
+backend/analysis_report*
+backend/exported_artifacts/
+backend/integrity_certificate.pdf

@@ -10,3 +10,7 @@ libewf-python
 libvhdi-python
 libesedb-python
 fpdf2
+python-jose[cryptography]
+passlib[bcrypt]
+python-multipart
+email-validator
