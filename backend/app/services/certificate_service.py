@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -23,7 +24,7 @@ class CertificateService:
 
     @staticmethod
     def _pdf_safe(text: Any) -> str:
-        """Helvetica core fonts only support a latin-1-ish range."""
+        """Normalize core-font text and break oversized unspaced PDF tokens."""
         if text is None:
             return ""
         s = str(text)
@@ -39,7 +40,14 @@ class CertificateService:
         }
         for a, b in replacements.items():
             s = s.replace(a, b)
-        return s.encode("latin-1", errors="replace").decode("latin-1")
+        s = s.encode("latin-1", errors="replace").decode("latin-1")
+        return re.sub(
+            r"\S{21,}",
+            lambda match: "\n".join(
+                match.group(0)[i : i + 20] for i in range(0, len(match.group(0)), 20)
+            ),
+            s,
+        )
 
     @staticmethod
     def _fmt_dt(dt: Optional[datetime]) -> str:
@@ -59,6 +67,17 @@ class CertificateService:
             "data_source_warning": "Warning: file may have changed or gone missing",
             "evidence_warning": "Warning: file may have changed or gone missing",
             "path_updated": "File location updated (same fingerprint confirmed)",
+            "analysis_started": "Disk analysis started",
+            "analysis_completed": "Disk analysis completed",
+            "report_downloaded": "Case report downloaded",
+            "analysis_started": "Disk analysis started",
+            "analysis_completed": "Disk analysis completed",
+            "analysis_failed": "Disk analysis failed",
+            "case_closed": "Case closed",
+            "case_reopened": "Case reopened",
+            "case_deleted": "Case marked deleted (log kept)",
+            "ai_summary_generated": "AI case summary created",
+            "evidence_added": "Evidence artifact registered",
         }
         title = action_map.get(
             log.action, (log.action or "action").replace("_", " ").title()
@@ -68,16 +87,26 @@ class CertificateService:
             try:
                 d = json.loads(log.details)
                 if isinstance(d, dict):
+                    parts = []
                     if d.get("filename"):
-                        detail = f"File: {d['filename']}"
-                    elif d.get("warning"):
-                        detail = str(d["warning"])
-                    elif d.get("warnings") is not None:
-                        detail = (
+                        parts.append(f"File: {d['filename']}")
+                    if d.get("old_path") and d.get("new_path"):
+                        parts.append(f"Path: {d['old_path']} -> {d['new_path']}")
+                    elif d.get("path"):
+                        parts.append(f"Path: {d['path']}")
+                    if d.get("sha256"):
+                        parts.append(f"SHA-256: {str(d['sha256'])[:16]}...")
+                    if d.get("note"):
+                        parts.append(str(d["note"]))
+                    if d.get("warning"):
+                        parts.append(str(d["warning"]))
+                    if d.get("warnings") is not None:
+                        parts.append(
                             f"Checked {d.get('total', '?')} file(s); "
                             f"{d.get('ok', 0)} unchanged, "
                             f"{d.get('warnings', 0)} problem(s)."
                         )
+                    detail = " | ".join(parts) if parts else ""
             except Exception:
                 detail = ""
 
@@ -117,6 +146,12 @@ class CertificateService:
             logs = (
                 db.query(ChainOfCustody)
                 .filter(ChainOfCustody.case_id == case.id)
+                .filter(
+                    ~(
+                        (ChainOfCustody.action == "integrity_check")
+                        & (ChainOfCustody.actor == "certificate")
+                    )
+                )
                 .order_by(ChainOfCustody.timestamp.asc())
                 .all()
             )
@@ -368,4 +403,212 @@ class CertificateService:
         ]
 
         output_path.write_text("\n".join(lines), encoding="utf-8")
+        return output_path
+
+
+    @staticmethod
+    def _latest_presentation(case_number: str) -> Optional[Dict[str, Any]]:
+        """Load latest completed analysis presentation for the case, if any."""
+        try:
+            from app.database import SessionLocal as _SL
+            from app.services.analysis_store import latest_for_case, run_to_job_dict
+
+            db = _SL()
+            try:
+                run = latest_for_case(db, case_number)
+                if not run or run.status != "completed":
+                    return None
+                job = run_to_job_dict(run)
+                return job.get("result")
+            finally:
+                db.close()
+        except Exception:
+            return None
+
+    @staticmethod
+    def write_full_report_pdf(case_number: str, output_path: str | Path) -> Path:
+        """
+        Case report PDF: case header, integrity snapshot, key analysis findings,
+        and full chain of custody. Replaces the old 'certificate' download.
+        """
+        data = CertificateService.build_certificate_data(case_number)
+        presentation = CertificateService._latest_presentation(case_number)
+        output_path = Path(output_path)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        safe = CertificateService._pdf_safe
+
+        pdf = FPDF()
+        pdf.set_auto_page_break(auto=True, margin=15)
+        pdf.add_page()
+
+        # Title
+        pdf.set_font("Helvetica", "B", 16)
+        pdf.cell(0, 10, safe("Morpheus Case Report"), ln=True)
+        pdf.set_font("Helvetica", "", 11)
+        pdf.ln(2)
+        pdf.multi_cell(
+            0,
+            6,
+            safe(
+                "This report summarizes integrity status, key findings from disk "
+                "analysis (when available), and the chain of custody for the case."
+            ),
+        )
+        pdf.ln(4)
+
+        # Case details
+        pdf.set_font("Helvetica", "B", 12)
+        pdf.cell(0, 8, safe("1. Case details"), ln=True)
+        pdf.set_font("Helvetica", "", 11)
+        pdf.cell(0, 6, safe(f"Case number: {data['case_number']}"), ln=True)
+        pdf.cell(0, 6, safe(f"Case name: {data['case_name']}"), ln=True)
+        pdf.cell(0, 6, safe(f"Examiner: {data['examiner_name']}"), ln=True)
+        if data.get("organisation"):
+            pdf.cell(0, 6, safe(f"Organisation: {data['organisation']}"), ln=True)
+        pdf.cell(
+            0,
+            6,
+            safe(f"Generated: {CertificateService._fmt_dt(data['generated_at'])}"),
+            ln=True,
+        )
+        pdf.ln(3)
+
+        # Integrity
+        pdf.set_font("Helvetica", "B", 12)
+        pdf.cell(0, 8, safe(f"2. Integrity: {data['overall_status']}"), ln=True)
+        pdf.set_font("Helvetica", "", 11)
+        pdf.multi_cell(0, 6, safe(data["overall_summary"]))
+        pdf.ln(2)
+        pdf.set_font("Helvetica", "", 10)
+        for ds in data["data_sources"]:
+            status = "OK" if ds["consistent"] else "PROBLEM"
+            block = (
+                f"- {ds['label']} ({ds['filename']})\n"
+                f"  Path: {ds.get('path') or 'n/a'}\n"
+                f"  SHA-256: {ds['fingerprint']}\n"
+                f"  Status: {status}"
+            )
+            if ds.get("warning"):
+                block += f"\n  Note: {ds['warning']}"
+            pdf.set_x(pdf.l_margin)
+            pdf.multi_cell(0, 5, safe(block))
+            pdf.ln(1)
+
+        # Analysis findings
+        pdf.ln(2)
+        pdf.set_font("Helvetica", "B", 12)
+        pdf.cell(0, 8, safe("3. Key analysis findings"), ln=True)
+        pdf.set_font("Helvetica", "", 10)
+
+        if not presentation:
+            pdf.multi_cell(
+                0,
+                5,
+                safe(
+                    "No completed disk analysis is stored for this case yet. "
+                    "Run Analyze on a data source, then download this report again."
+                ),
+            )
+        else:
+            cs = presentation.get("case_summary") or {}
+            lines = [
+                f"Files scanned: {cs.get('total_files_scanned', '—')}",
+                f"Deleted recovered: {cs.get('total_deleted_recovered', cs.get('total_deleted_found', '—'))}",
+                f"Emails: {cs.get('total_emails_parsed', '—')}",
+                f"Browser history entries: {cs.get('total_browser_history_entries', '—')}",
+                f"Volumes: {cs.get('total_volumes_scanned', '—')}",
+            ]
+            for line in lines:
+                pdf.cell(0, 5, safe(f"- {line}"), ln=True)
+
+            # Documents of interest (capped)
+            docs = presentation.get("documents_of_interest") or presentation.get(
+                "documents"
+            ) or []
+            if isinstance(docs, list) and docs:
+                pdf.ln(2)
+                pdf.set_font("Helvetica", "B", 11)
+                pdf.cell(0, 6, safe("Documents of interest (sample)"), ln=True)
+                pdf.set_font("Helvetica", "", 9)
+                for doc in docs[:12]:
+                    if isinstance(doc, dict):
+                        name = doc.get("name") or doc.get("path") or str(doc)
+                        p = doc.get("path") or ""
+                        pdf.set_x(pdf.l_margin)
+                        pdf.multi_cell(0, 4, safe(f"- {name}" + (f"  [{p}]" if p else "")))
+                    else:
+                        pdf.set_x(pdf.l_margin)
+                        pdf.multi_cell(0, 4, safe(f"- {doc}"))
+
+            emails = presentation.get("emails") or []
+            if isinstance(emails, list) and emails:
+                pdf.ln(2)
+                pdf.set_font("Helvetica", "B", 11)
+                pdf.cell(0, 6, safe("Email artifacts (sample)"), ln=True)
+                pdf.set_font("Helvetica", "", 9)
+                for em in emails[:8]:
+                    if not isinstance(em, dict):
+                        continue
+                    subj = em.get("subject") or "(no subject)"
+                    frm = em.get("from") or em.get("sender") or "?"
+                    pdf.set_x(pdf.l_margin)
+                    pdf.multi_cell(0, 4, safe(f"- {subj}  (from {frm})"))
+
+            suspicious = presentation.get("suspicious") or presentation.get(
+                "suspicious_items"
+            ) or []
+            if isinstance(suspicious, list) and suspicious:
+                pdf.ln(2)
+                pdf.set_font("Helvetica", "B", 11)
+                pdf.cell(0, 6, safe("Suspicious / notable items (sample)"), ln=True)
+                pdf.set_font("Helvetica", "", 9)
+                for s in suspicious[:10]:
+                    if isinstance(s, dict):
+                        pdf.set_x(pdf.l_margin)
+                        pdf.multi_cell(
+                            0,
+                            4,
+                            safe(f"- {s.get('name') or s.get('path') or s}"),
+                        )
+                    else:
+                        pdf.set_x(pdf.l_margin)
+                        pdf.multi_cell(0, 4, safe(f"- {s}"))
+
+        # Custody
+        pdf.add_page()
+        pdf.set_font("Helvetica", "B", 12)
+        pdf.cell(0, 8, safe("4. Chain of custody"), ln=True)
+        pdf.set_font("Helvetica", "", 10)
+        pdf.multi_cell(
+            0,
+            5,
+            safe(
+                "Chronological record of who handled case records and what actions "
+                "were taken."
+            ),
+        )
+        pdf.ln(2)
+        if not data["custody_timeline"]:
+            pdf.cell(0, 6, safe("No custody entries yet."), ln=True)
+        for entry in data["custody_timeline"]:
+            block = f"{entry['when']} - {entry['who']}\n  {entry['what']}"
+            if entry.get("detail"):
+                block += f"\n  {entry['detail']}"
+            pdf.set_x(pdf.l_margin)
+            pdf.multi_cell(0, 5, safe(block))
+            pdf.ln(1)
+
+        pdf.ln(4)
+        pdf.set_font("Helvetica", "I", 9)
+        pdf.multi_cell(
+            0,
+            5,
+            safe(
+                "A fingerprint (SHA-256) is computed from file contents. Matching "
+                "fingerprints mean content is unchanged since registration. The path "
+                "only indicates where the system reads the file."
+            ),
+        )
+
+        pdf.output(str(output_path))
         return output_path

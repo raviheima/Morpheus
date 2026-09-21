@@ -14,6 +14,9 @@ export default function App() {
   const [user, setUser] = useState(
     () => localStorage.getItem("mz_user") || ""
   );
+  const [userRole, setUserRole] = useState(
+    () => localStorage.getItem("mz_role") || ""
+  );
   const [screen, setScreen] = useState(() => (token ? "hub" : "landing"));
   const [view, setView] = useState("overview");
 
@@ -22,6 +25,8 @@ export default function App() {
   const [dataSources, setDataSources] = useState([]);
   const [integrity, setIntegrity] = useState(null);
   const [custody, setCustody] = useState(null);
+  const [auditLog, setAuditLog] = useState([]);
+  const [extractionLog, setExtractionLog] = useState([]);
   const [analysisBySource, setAnalysisBySource] = useState({});
   const [activeAnalysis, setActiveAnalysis] = useState(null);
   const [activeJobUi, setActiveJobUi] = useState(null);
@@ -34,10 +39,19 @@ export default function App() {
   const [hashStartedAt, setHashStartedAt] = useState(null);
   const [error, setError] = useState("");
   const [toast, setToast] = useState(null);
+  const [aiSummary, setAiSummary] = useState(null);
+  const [aiConfigured, setAiConfigured] = useState(null);
+  const [aiBusy, setAiBusy] = useState(false);
+  const [evidenceList, setEvidenceList] = useState([]);
+  const [addEvOpen, setAddEvOpen] = useState(false);
+  const [evForm, setEvForm] = useState({ file_path: "", notes: "" });
 
   const [loginOpen, setLoginOpen] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
   const [addSrcOpen, setAddSrcOpen] = useState(false);
+  const [pathFixOpen, setPathFixOpen] = useState(false);
+  const [pathFixItem, setPathFixItem] = useState(null); // integrity item
+  const [pathFixValue, setPathFixValue] = useState("");
 
   const [loginForm, setLoginForm] = useState({
     username: "admin",
@@ -69,11 +83,22 @@ export default function App() {
     setUser(u);
   };
 
+  const loadCurrentUser = useCallback(async (t = token) => {
+    if (!t) return;
+    const current = await api("/auth/me", { token: t });
+    setUser(current.username);
+    setUserRole(current.role);
+    localStorage.setItem("mz_user", current.username);
+    localStorage.setItem("mz_role", current.role);
+  }, [token]);
+
   const logout = () => {
     localStorage.removeItem("mz_token");
     localStorage.removeItem("mz_user");
+    localStorage.removeItem("mz_role");
     setToken("");
     setUser("");
+    setUserRole("");
     setActive(null);
     setActiveAnalysis(null);
     setScreen("landing");
@@ -89,8 +114,11 @@ export default function App() {
   );
 
   useEffect(() => {
-    if (token) loadCases().catch(() => {});
-  }, [token, loadCases]);
+    if (token) {
+      loadCurrentUser().catch(() => logout());
+      loadCases().catch(() => {});
+    }
+  }, [token, loadCases, loadCurrentUser]);
 
   useEffect(() => {
     return () => {
@@ -118,6 +146,30 @@ export default function App() {
     }
   };
 
+  const loadAuditLog = async () => {
+    try {
+      const data = await api("/auth/audit", { token });
+      setAuditLog(
+        (Array.isArray(data) ? data : []).sort(
+          (a, b) =>
+            new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime() ||
+            b.id - a.id
+        )
+      );
+    } catch {
+      setAuditLog([]);
+    }
+  };
+
+  const loadExtractionLog = async (caseNumber) => {
+    try {
+      const data = await api(`/data-sources/${caseNumber}/extractions`, { token });
+      setExtractionLog(Array.isArray(data) ? data : []);
+    } catch {
+      setExtractionLog([]);
+    }
+  };
+
   const login = async (e) => {
     e.preventDefault();
     setBusy(true);
@@ -128,6 +180,9 @@ export default function App() {
         form: loginForm,
       });
       saveSession(data.access_token, loginForm.username);
+      const current = await api("/auth/me", { token: data.access_token });
+      setUserRole(current.role);
+      localStorage.setItem("mz_role", current.role);
       setLoginOpen(false);
       setScreen("hub");
       await loadCases(data.access_token);
@@ -138,6 +193,9 @@ export default function App() {
       setBusy(false);
     }
   };
+
+  const canEditCase = userRole === "admin" || userRole === "examiner";
+  const canDeleteCase = userRole === "admin";
 
   const createCase = async (e) => {
     e.preventDefault();
@@ -176,23 +234,54 @@ export default function App() {
     setAnalysisBySource({});
     setImagePreviewUrl(null);
     setScreen("workspace");
+    await api(`/cases/${c.case_number}`, { token }).catch(() => {});
     await refreshCaseFiles(c.case_number);
     await loadCustody(c.case_number);
+    await loadExtractionLog(c.case_number);
+    await loadAuditLog(c.case_number);
+    try {
+      const ev = await api(`/evidence/${c.case_number}`, { token });
+      setEvidenceList(Array.isArray(ev) ? ev : []);
+    } catch {
+      setEvidenceList([]);
+    }
+    setAiSummary(null);
+    try {
+      const aiStatus = await api("/analysis/ai-status", { token });
+      setAiConfigured(Boolean(aiStatus?.ai_configured));
+    } catch {
+      setAiConfigured(false);
+    }
+    // Load last stored analysis — no need to run again
+    try {
+      const latest = await api(`/analysis/case/${c.case_number}/latest`, { token });
+      if (latest && latest.status === "completed" && latest.result) {
+        setActiveAnalysis(latest);
+        setActiveJobUi(latest);
+      }
+    } catch {
+      /* no prior analysis */
+    }
   };
 
   const closeCase = async () => {
     if (!active) return;
     setBusy(true);
     try {
-      await api(`/cases/${active.case_number}/close`, {
+      const action = active.status === "closed" ? "reopen" : "close";
+      await api(`/cases/${active.case_number}/${action}`, {
         token,
         method: "POST",
       });
-      notify("Case closed", active.case_number);
+      const nextStatus = action === "reopen" ? "open" : "closed";
+      setActive((current) =>
+        current ? { ...current, status: nextStatus } : current
+      );
+      notify(action === "reopen" ? "Case reopened" : "Case closed", active.case_number);
       await loadCases();
-      setScreen("hub");
+      if (action === "close") setScreen("hub");
     } catch (e) {
-      notify("Close failed", e.message);
+      notify(action === "reopen" ? "Reopen failed" : "Close failed", e.message);
     } finally {
       setBusy(false);
     }
@@ -270,10 +359,34 @@ export default function App() {
       );
       setIntegrity(data);
       await loadCustody(active.case_number);
-      notify(
-        data.warnings === 0 ? "Integrity verified" : "Integrity problems",
-        `${data.ok ?? 0} ok · ${data.warnings ?? 0} warning(s)`
-      );
+      await refreshCaseFiles(active.case_number);
+
+      const items = data.items || [];
+      const missing = items.filter((i) => i.status === "missing");
+      const mismatch = items.filter((i) => i.status === "hash_mismatch");
+
+      if (data.warnings === 0) {
+        notify("Integrity verified", `${data.ok ?? 0} file(s) match registered fingerprints`);
+      } else if (mismatch.length) {
+        notify(
+          "Integrity compromised",
+          `${mismatch.length} file(s) no longer match SHA-256 — content may have been modified or replaced`
+        );
+      } else if (missing.length) {
+        notify(
+          "File(s) missing",
+          `${missing.length} path(s) not found — update the path if the file moved`
+        );
+        // Open fix dialog for first missing data_source
+        const first = missing.find((i) => i.kind === "data_source") || missing[0];
+        if (first) {
+          setPathFixItem(first);
+          setPathFixValue(first.stored_path || "");
+          setPathFixOpen(true);
+        }
+      } else {
+        notify("Integrity problems", `${data.ok ?? 0} ok · ${data.warnings ?? 0} warning(s)`);
+      }
     } catch (err) {
       notify("Integrity failed", err.message);
     } finally {
@@ -281,18 +394,51 @@ export default function App() {
     }
   };
 
-  const downloadCertificate = async () => {
+  const submitPathFix = async (e) => {
+    e?.preventDefault?.();
+    if (!pathFixItem || !pathFixValue.trim()) return;
+    setBusy(true);
+    setError("");
+    try {
+      await api(`/data-sources/by-id/${pathFixItem.id}/path`, {
+        token,
+        method: "PATCH",
+        body: { new_path: pathFixValue.trim() },
+      });
+      setPathFixOpen(false);
+      setPathFixItem(null);
+      notify("Path updated", "Fingerprint confirmed — location saved");
+      if (active) {
+        await refreshCaseFiles(active.case_number);
+        await loadCustody(active.case_number);
+        // re-run integrity quietly
+        const data = await api(
+          `/data-sources/${active.case_number}/integrity-check`,
+          { token, method: "POST" }
+        );
+        setIntegrity(data);
+      }
+    } catch (err) {
+      setError(err.message);
+      notify("Path update failed", err.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const downloadReport = async () => {
     if (!active) return;
     setBusy(true);
     try {
       const blob = await api(
-        `/data-sources/${active.case_number}/certificate.pdf`,
+        `/data-sources/${active.case_number}/report.pdf`,
         { token }
       );
-      downloadBlob(blob, `integrity_${active.case_number}.pdf`);
-      notify("Certificate downloaded", active.case_number);
+      downloadBlob(blob, `morpheus_report_${active.case_number}.pdf`);
+      notify("Report downloaded", "Findings, integrity, and chain of custody");
+      await loadCustody(active.case_number);
     } catch (err) {
-      notify("Certificate failed", err.message);
+      notify("Report download failed", err.message);
     } finally {
       setBusy(false);
     }
@@ -309,7 +455,7 @@ export default function App() {
         token,
         method: "POST",
         body: {
-          evidence_path: ds.stored_path,
+          evidence_path: ds.stored_path, case_number: active?.case_number, data_source_id: ds.id,
           export_artifacts: true,
           build_timeline: false,
         },
@@ -388,7 +534,11 @@ export default function App() {
       const blob = await api("/analysis/export-file", {
         token,
         method: "POST",
-        body: { evidence_path: ds.stored_path, file_path: path },
+        body: {
+          evidence_path: ds.stored_path,
+          file_path: path,
+          case_number: active.case_number,
+        },
       });
       const name =
         art.name || String(path).split(/[/\\]/).pop() || "artifact.bin";
@@ -413,7 +563,11 @@ export default function App() {
       const blob = await api("/analysis/export-file", {
         token,
         method: "POST",
-        body: { evidence_path: ds.stored_path, file_path: path },
+        body: {
+          evidence_path: ds.stored_path,
+          file_path: path,
+          case_number: active.case_number,
+        },
       });
       if (imagePreviewUrl) URL.revokeObjectURL(imagePreviewUrl);
       const url = URL.createObjectURL(blob);
@@ -428,6 +582,62 @@ export default function App() {
     }
   };
 
+  const requestAiSummary = async () => {
+    if (!active) return;
+    setAiBusy(true);
+    try {
+      const data = await api("/analysis/ai-summary", {
+        token,
+        method: "POST",
+        body: { case_number: active.case_number },
+      });
+      if (!data.ok) {
+        setAiConfigured(Boolean(data.ai_configured));
+        notify("AI summary unavailable", data.error || "Set MORPHEUS_AI_API_KEY on the server");
+        setAiSummary(null);
+      } else {
+        setAiConfigured(true);
+        setAiSummary(data.summary);
+        notify("AI summary ready", "Plain-language overview for the court");
+        await loadCustody(active.case_number);
+      }
+    } catch (err) {
+      notify("AI summary failed", err.message);
+    } finally {
+      setAiBusy(false);
+    }
+  };
+
+  const addEvidenceArtifact = async (e) => {
+    e.preventDefault();
+    if (!active || !evForm.file_path.trim()) return;
+    setBusy(true);
+    setError("");
+    try {
+      await api("/evidence/", {
+        token,
+        method: "POST",
+        body: {
+          case_number: active.case_number,
+          file_path: evForm.file_path.trim(),
+          collected_by: user,
+          notes: evForm.notes || null,
+        },
+      });
+      setAddEvOpen(false);
+      setEvForm({ file_path: "", notes: "" });
+      const ev = await api(`/evidence/${active.case_number}`, { token });
+      setEvidenceList(Array.isArray(ev) ? ev : []);
+      await loadCustody(active.case_number);
+      notify("Evidence added", "Fingerprint stored in chain of custody");
+    } catch (err) {
+      setError(err.message);
+      notify("Add evidence failed", err.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const hasFiles = dataSources.length > 0;
   const hashElapsed = hashStartedAt
     ? Math.round((Date.now() - hashStartedAt) / 1000)
@@ -436,24 +646,129 @@ export default function App() {
   /* ───── LANDING ───── */
   if (screen === "landing") {
     return (
-      <div className="landing">
+      <div className="landing premium-land">
         <header className="land-header">
           <span className="topbar-brand">MORPHEUS</span>
-          <button
-            type="button"
-            className="btn btn-primary"
-            onClick={() => (token ? setScreen("hub") : setLoginOpen(true))}
-          >
-            Get started
-          </button>
+          <div style={{ display: "flex", gap: 10 }}>
+            <button
+              type="button"
+              className="btn"
+              onClick={() => document.getElementById("features")?.scrollIntoView({ behavior: "smooth" })}
+            >
+              Features
+            </button>
+            <button
+              type="button"
+              className="btn btn-primary"
+              onClick={() => (token ? setScreen("hub") : setLoginOpen(true))}
+            >
+              {token ? "Open workspace" : "Sign in"}
+            </button>
+          </div>
         </header>
-        <div className="land-hero">
-          <h1>Digital forensics with integrity in the workflow</h1>
-          <p>
-            Register disk images, verify fingerprints, keep chain of custody,
-            and run Windows triage — in one examiner workspace. Non-image
-            evidence collection and mobile analysis are on the roadmap.
+
+        <section className="land-hero">
+          <p className="land-kicker">Digital forensics for investigators and courts</p>
+          <h1>Know that your evidence still matches the original</h1>
+          <p className="land-lead">
+            Morpheus helps you register disk images, check file fingerprints,
+            keep a clear chain of custody, and review what the disk analysis found —
+            in one calm workspace.
           </p>
+          <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+            <button
+              type="button"
+              className="btn btn-primary"
+              onClick={() => (token ? setScreen("hub") : setLoginOpen(true))}
+            >
+              Start examining
+            </button>
+            <button
+              type="button"
+              className="btn"
+              onClick={() => document.getElementById("why")?.scrollIntoView({ behavior: "smooth" })}
+            >
+              Why integrity matters
+            </button>
+          </div>
+        </section>
+
+        <section className="land-grid" id="features">
+          <div className="land-card">
+            <h3>Integrity checks</h3>
+            <p>
+              When you register a file, Morpheus stores its SHA-256 fingerprint.
+              Later you can verify that the file is still the same — or see a clear
+              warning if it is missing or changed.
+            </p>
+          </div>
+          <div className="land-card">
+            <h3>Chain of custody</h3>
+            <p>
+              Every important action is logged: who did it, when, and what changed.
+              The log is kept even if a case is closed or marked deleted.
+            </p>
+          </div>
+          <div className="land-card">
+            <h3>Disk analysis, stored once</h3>
+            <p>
+              Run analysis on a disk image. Results are saved. Open the case later
+              and the findings are still there — you do not need to run analysis again.
+            </p>
+          </div>
+          <div className="land-card">
+            <h3>Court-ready reports</h3>
+            <p>
+              Download a case report with integrity status, key findings, and the
+              full custody timeline. Optional AI summary explains findings in simple language.
+            </p>
+          </div>
+          <div className="land-card">
+            <h3>Evidence artifacts</h3>
+            <p>
+              Add other files (exports, photos, notes) with the same fingerprint and
+              custody rules — not only disk images.
+            </p>
+          </div>
+          <div className="land-card">
+            <h3>Items to review</h3>
+            <p>
+              Highlight signs of encryption, deleted material, and suspicious text
+              so judges and reviewers can focus on what matters.
+            </p>
+          </div>
+        </section>
+
+        <section className="land-why" id="why">
+          <h2>Why file integrity is the heart of Morpheus</h2>
+          <p>
+            Courts care whether evidence is still the same as when it was collected.
+            A fingerprint is a short value made from the whole file. If even one byte
+            changes, the fingerprint changes. Matching fingerprints mean the content
+            is unchanged. The file path only tells the tool where to read the file.
+          </p>
+        </section>
+
+        <section className="land-soon">
+          <h2>Coming soon</h2>
+          <ul>
+            <li>
+              <strong>Multi-machine sync</strong> — share cases between lab computers
+              without breaking custody. This needs careful design so logs stay trusted;
+              it is planned, not available yet.
+            </li>
+            <li>
+              <strong>Mobile device acquisition</strong> — Android and iOS collection
+              and analysis in the same workflow.
+            </li>
+            <li>
+              <strong>Deeper cloud artifacts</strong> — more sources beyond local disk images.
+            </li>
+          </ul>
+        </section>
+
+        <footer className="land-footer">
+          <span>Morpheus — integrity-first digital forensics</span>
           <button
             type="button"
             className="btn btn-primary"
@@ -461,53 +776,50 @@ export default function App() {
           >
             Get started
           </button>
-        </div>
+        </footer>
+
         {loginOpen && (
           <Modal title="Sign in" onClose={() => setLoginOpen(false)}>
-            <form onSubmit={login}>
-              <label>Username</label>
+            <form onSubmit={login} className="signin-form">
+              <label htmlFor="signin-username">Username</label>
               <input
+                id="signin-username"
+                name="username"
+                type="text"
+                autoComplete="username"
+                required
                 value={loginForm.username}
                 onChange={(e) =>
                   setLoginForm({ ...loginForm, username: e.target.value })
                 }
-                autoComplete="username"
               />
-              <label>Password</label>
+              <label htmlFor="signin-password">Password</label>
               <input
+                id="signin-password"
+                name="password"
                 type="password"
+                autoComplete="current-password"
+                required
                 value={loginForm.password}
                 onChange={(e) =>
                   setLoginForm({ ...loginForm, password: e.target.value })
                 }
-                autoComplete="current-password"
               />
-              {error && <p className="err-text">{error}</p>}
-              <footer>
-                <button
-                  type="button"
-                  className="btn"
-                  onClick={() => setLoginOpen(false)}
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  className="btn btn-primary"
-                  disabled={busy}
-                >
-                  {busy ? "Signing in…" : "Sign in"}
-                </button>
-              </footer>
+              {error ? (
+                <p className="err-text" role="alert">
+                  {error}
+                </p>
+              ) : null}
+              <button type="submit" className="btn btn-primary" disabled={busy}>
+                Sign in
+              </button>
             </form>
           </Modal>
         )}
-        {toast && <Toast {...toast} />}
       </div>
     );
   }
 
-  /* ───── HUB ───── */
   if (screen === "hub") {
     return (
       <div className="app-root">
@@ -522,6 +834,8 @@ export default function App() {
               <button
                 type="button"
                 className="hub-tile"
+                disabled={!canEditCase}
+                title={!canEditCase ? "Viewers have read-only access" : undefined}
                 onClick={() => {
                   setCaseForm((f) => ({ ...f, examiner_name: user }));
                   setError("");
@@ -540,6 +854,19 @@ export default function App() {
               >
                 <strong>Refresh list</strong>
                 <span>Reload cases from the Morpheus API.</span>
+              </button>
+              <button
+                type="button"
+                className="hub-tile"
+                onClick={() => {
+                  setView("audit");
+                  loadAuditLog().catch(() =>
+                    notify("Audit log unavailable", "Could not load the general audit log")
+                  );
+                }}
+              >
+                <strong>General audit log</strong>
+                <span>Review application-wide activity across the shared demo organization.</span>
               </button>
             </div>
             <div className="panel">
@@ -580,6 +907,32 @@ export default function App() {
                   </table>
                 )}
               </div>
+              {view === "audit" && (
+                <div className="panel" style={{ marginTop: 14 }}>
+                  <div className="panel-title">General audit log</div>
+                  <div className="panel-body audit-log-scroll">
+                    {!auditLog.length ? (
+                      <div className="empty">No audit events recorded yet.</div>
+                    ) : (
+                      auditLog.map((entry) => (
+                        <div key={entry.id} className="finding">
+                          <span className="dot" />
+                          <div>
+                            <strong>{entry.action} — {entry.actor}</strong>
+                            <small>
+                              {new Date(entry.timestamp).toLocaleString()}
+                              {entry.case_id ? ` · Case ${entry.case_id}` : ""}
+                            </small>
+                            {entry.details ? (
+                              <small className="mono">{entry.details}</small>
+                            ) : null}
+                          </div>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         </div>
@@ -737,6 +1090,14 @@ export default function App() {
                   {active?.case_number} · Integrity, custody, and disk-image
                   analysis
                 </p>
+                {userRole === "viewer" && (
+                  <div className="access-note" role="status">
+                    You are signed in as a viewer. Case data, integrity checks,
+                    findings, custody, and reports are available read-only.
+                    Evidence changes, analysis, and case status changes are
+                    restricted to examiners and admins.
+                  </div>
+                )}
                 <div
                   className={`banner ${
                     integrity
@@ -769,10 +1130,88 @@ export default function App() {
                     Verify integrity
                   </button>
                 </div>
+                {integrity?.items?.length > 0 && (
+                  <div className="panel" style={{ marginBottom: 12 }}>
+                    <div className="panel-title">Integrity results</div>
+                    <div className="panel-body">
+                      {(integrity.items || []).map((it) => {
+                        const bad = it.status !== "ok";
+                        const compromised = it.status === "hash_mismatch";
+                        const missing = it.status === "missing";
+                        return (
+                          <div
+                            key={`${it.kind}-${it.id}`}
+                            className="finding"
+                            style={{
+                              borderLeft: compromised
+                                ? "3px solid #c44"
+                                : missing
+                                  ? "3px solid #c90"
+                                  : "3px solid #2a7",
+                              paddingLeft: 10,
+                              marginBottom: 10,
+                            }}
+                          >
+                            <div>
+                              <strong>
+                                {it.filename || it.stored_path || `#${it.id}`}
+                              </strong>
+                              <small style={{ display: "block" }}>
+                                {it.kind} ·{" "}
+                                {compromised
+                                  ? "COMPROMISED (hash mismatch)"
+                                  : missing
+                                    ? "MISSING (path not found)"
+                                    : "OK"}
+                              </small>
+                              <small style={{ display: "block", color: "var(--text-2)" }}>
+                                {it.message}
+                              </small>
+                              {it.stored_path ? (
+                                <small className="mono" style={{ display: "block" }}>
+                                  {it.stored_path}
+                                </small>
+                              ) : null}
+                              {compromised && (
+                                <small style={{ display: "block", marginTop: 4 }}>
+                                  Expected {it.expected_sha256?.slice?.(0, 16)}… ·
+                                  Actual {it.actual_sha256?.slice?.(0, 16)}…
+                                  <br />
+                                  Do not treat this file as original evidence without
+                                  investigation. Path update is blocked unless the
+                                  fingerprint matches.
+                                </small>
+                              )}
+                              {missing && it.kind === "data_source" && (
+                                <button
+                                  type="button"
+                                  className="btn btn-sm"
+                                  style={{ marginTop: 6 }}
+                                  disabled={!canEditCase}
+                                  title={!canEditCase ? "Viewers cannot update evidence paths" : undefined}
+                                  onClick={() => {
+                                    setPathFixItem(it);
+                                    setPathFixValue(it.stored_path || "");
+                                    setPathFixOpen(true);
+                                    setError("");
+                                  }}
+                                >
+                                  Update path…
+                                </button>
+                              )}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
                 <div className="panel-actions">
                   <button
                     type="button"
                     className="btn btn-primary"
+                    disabled={!canEditCase}
+                    title={!canEditCase ? "Viewers cannot add data sources" : undefined}
                     onClick={() => {
                       setError("");
                       setSrcForm({
@@ -798,22 +1237,24 @@ export default function App() {
                     type="button"
                     className="btn"
                     disabled={busy}
-                    onClick={downloadCertificate}
+                    onClick={downloadReport}
                   >
-                    Integrity certificate
+                    Download report
                   </button>
                   <button
                     type="button"
                     className="btn"
-                    disabled={busy}
+                    disabled={!canEditCase || busy}
+                    title={!canEditCase ? "Viewers cannot close or reopen cases" : undefined}
                     onClick={closeCase}
                   >
-                    Close case
+                    {active?.status === "closed" ? "Reopen case" : "Close case"}
                   </button>
                   <button
                     type="button"
                     className="btn btn-danger"
-                    disabled={busy}
+                    disabled={!canDeleteCase || busy}
+                    title={!canDeleteCase ? "Only admins can delete cases" : undefined}
                     onClick={deleteCase}
                   >
                     Delete case
@@ -875,7 +1316,8 @@ export default function App() {
                               <button
                                 type="button"
                                 className="btn btn-sm btn-primary"
-                                disabled={busy}
+                                disabled={!canEditCase || busy}
+                                title={!canEditCase ? "Viewers cannot analyze data sources" : undefined}
                                 onClick={() => startAnalysisFor(ds)}
                               >
                                 Analyze
@@ -908,6 +1350,27 @@ export default function App() {
                                 </strong>
                                 <small>{e.when}</small>
                               </div>
+                              <div className="panel">
+                                <div className="panel-title">Extracted files</div>
+                                <div className="panel-body extraction-log-scroll">
+                                  {!extractionLog.length ? (
+                                    <div className="empty">No files extracted from this case.</div>
+                                  ) : (
+                                    extractionLog.map((entry) => (
+                                      <div key={entry.id} className="finding">
+                                        <span className="dot" />
+                                        <div>
+                                          <strong className="mono">{entry.file_path}</strong>
+                                          <small>
+                                            {entry.actor} ·{" "}
+                                            {new Date(entry.timestamp).toLocaleString()}
+                                          </small>
+                                        </div>
+                                      </div>
+                                    ))
+                                  )}
+                                </div>
+                              </div>
                             </div>
                           ))
                       )}
@@ -936,6 +1399,8 @@ export default function App() {
                   <button
                     type="button"
                     className="btn btn-primary"
+                    disabled={!canEditCase}
+                    title={!canEditCase ? "Viewers cannot add data sources" : undefined}
                     onClick={() => setAddSrcOpen(true)}
                   >
                     Add data source
@@ -959,7 +1424,8 @@ export default function App() {
                             type="button"
                             className="btn btn-sm btn-primary"
                             style={{ marginTop: 10 }}
-                            disabled={busy}
+                            disabled={!canEditCase || busy}
+                            title={!canEditCase ? "Viewers cannot analyze data sources" : undefined}
                             onClick={() => startAnalysisFor(ds)}
                           >
                             Analyze
@@ -981,22 +1447,117 @@ export default function App() {
               <>
                 <h1 className="page-title">Key findings</h1>
                 <p className="page-sub">
-                  Documents of interest, suspicious files, emails, web history,
-                  and more — from the analysis presentation report.
+                  Saved analysis results. You only need to run analysis once per
+                  image; reopen the case to see them again.
                 </p>
                 {!report ? (
                   <div className="empty">
-                    Run <strong>Analyze</strong> on a data source first.
+                    Run <strong>Analyze</strong> on a data source first. Results
+                    are stored automatically.
                   </div>
                 ) : (
-                  <FindingsReport
-                    report={report}
-                    busy={busy}
-                    onExtract={extractArtifact}
-                    onPreviewImage={previewImage}
-                    imagePreviewUrl={imagePreviewUrl}
-                    imagePreviewName={imagePreviewName}
-                  />
+                  <>
+                    <div className="panel review-panel">
+                      <div className="panel-title">Items for human review</div>
+                      <div className="panel-body">
+                        <p style={{ color: "var(--text-2)", fontSize: 14 }}>
+                          These items may matter in court. Open a path to extract
+                          or preview when the disk image is still available.
+                        </p>
+                        {(report.suspicious_files || report.suspicious || []).length ? (
+                          <div style={{ marginBottom: 12 }}>
+                            <strong>Suspicious / notable files</strong>
+                            {(report.suspicious_files || report.suspicious || [])
+                              .slice(0, 12)
+                              .map((d, i) => (
+                                <div key={i} className="finding">
+                                  <div>
+                                    <strong>{d.name || d.path}</strong>
+                                    <small className="mono">{d.path}</small>
+                                    <div style={{ marginTop: 4 }}>
+                                      <button type="button" className="btn btn-sm" disabled={busy} onClick={() => extractArtifact(d)}>Extract</button>
+                                      {/\.(jpg|jpeg|png|gif|bmp|webp)$/i.test(String(d.path || d.name || "")) && (
+                                        <button type="button" className="btn btn-sm" style={{ marginLeft: 6 }} disabled={busy} onClick={() => previewImage(d)}>Preview</button>
+                                      )}
+                                    </div>
+                                  </div>
+                                </div>
+                              ))}
+                          </div>
+                        ) : null}
+                        {(report.documents_of_interest || []).length ? (
+                          <div style={{ marginBottom: 12 }}>
+                            <strong>Documents of interest (incl. possible encryption)</strong>
+                            {(report.documents_of_interest || []).slice(0, 12).map((d, i) => (
+                              <div key={i} className="finding">
+                                <div>
+                                  <strong>{d.name || d.path}</strong>
+                                  <small className="mono">{d.path}</small>
+                                  <div style={{ marginTop: 4 }}>
+                                    <button type="button" className="btn btn-sm" disabled={busy} onClick={() => extractArtifact(d)}>Extract</button>
+                                  </div>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        ) : null}
+                        {(report.deleted_files || []).length ? (
+                          <div>
+                            <strong>Deleted / recovered paths (sample)</strong>
+                            {(report.deleted_files || []).slice(0, 8).map((d, i) => (
+                              <div key={i} className="finding">
+                                <div>
+                                  <strong>{d.name || d.path}</strong>
+                                  <small className="mono">{d.path}</small>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        ) : null}
+                        {!(report.suspicious_files || report.suspicious || []).length &&
+                          !(report.documents_of_interest || []).length &&
+                          !(report.deleted_files || []).length && (
+                            <div className="empty">No high-priority review items in this presentation.</div>
+                          )}
+                      </div>
+                    </div>
+
+                    <div className="panel" style={{ marginTop: 14 }}>
+                      <div className="panel-title">AI summary for the court</div>
+                      <div className="panel-body">
+                        <p style={{ color: "var(--text-2)", fontSize: 14 }}>
+                          Creates a simple-language summary from the stored findings.
+                          {aiConfigured === false && (
+                            <>
+                              {" "}
+                              Set <code>MORPHEUS_AI_API_KEY</code> on the API server
+                              (OpenAI-compatible) to enable it.
+                            </>
+                          )}
+                        </p>
+                        <button
+                          type="button"
+                          className="btn btn-primary"
+                          disabled={aiBusy || busy}
+                          onClick={requestAiSummary}
+                        >
+                          {aiBusy ? "Writing summary…" : "Generate AI summary"}
+                        </button>
+                        {aiSummary ? (
+                          <pre className="ai-summary-box">{aiSummary}</pre>
+                        ) : null}
+                      </div>
+                    </div>
+
+                    <FindingsReport
+                      report={report}
+                      busy={busy}
+                      onExtract={extractArtifact}
+                      onPreviewImage={previewImage}
+                      imagePreviewUrl={imagePreviewUrl}
+                      imagePreviewName={imagePreviewName}
+                    />
+                  </>
                 )}
               </>
             )}
@@ -1005,8 +1566,7 @@ export default function App() {
               <>
                 <h1 className="page-title">Chain of custody</h1>
                 <p className="page-sub">
-                  Actions recorded for this case (same source as the integrity
-                  certificate).
+                  Actions recorded for this case. This log is kept even when a case is closed or marked deleted.
                 </p>
                 <div className="panel">
                   <div className="panel-body">
@@ -1030,6 +1590,7 @@ export default function App() {
                         </div>
                       ))
                     )}
+
                   </div>
                 </div>
               </>
@@ -1039,24 +1600,75 @@ export default function App() {
               <>
                 <h1 className="page-title">Reports</h1>
                 <p className="page-sub">
-                  Integrity certificate for non-technical readers. Analysis
-                  detail is on Key findings.
+                  Download a case PDF (findings + integrity + custody), or review
+                  the full analysis presentation below.
                 </p>
                 <div className="panel">
-                  <div className="panel-title">Evidence integrity certificate</div>
+                  <div className="panel-title">Case report (PDF)</div>
                   <div className="panel-body">
                     <p style={{ color: "var(--text-2)", fontSize: 14 }}>
-                      PDF with fingerprints, verification status, and custody
-                      timeline.
+                      Includes integrity status, key analysis findings from the
+                      last completed run, and the full chain of custody.
                     </p>
                     <button
                       type="button"
                       className="btn btn-primary"
                       disabled={busy}
-                      onClick={downloadCertificate}
+                      onClick={downloadReport}
                     >
-                      Download certificate PDF
+                      Download report
                     </button>
+                  </div>
+                </div>
+                <div className="panel" style={{ marginTop: 16 }}>
+                  <div className="panel-title">Full analysis report</div>
+                  <div className="panel-body">
+                    {!report ? (
+                      <div className="empty">
+                        No analysis yet. Open Evidence / Key findings and run
+                        Analyze on a data source.
+                      </div>
+                    ) : (
+                      <>
+                        <div className="stats" style={{ marginBottom: 12 }}>
+                          <div className="stat">
+                            <label>Files scanned</label>
+                            <b>{report?.case_summary?.total_files_scanned ?? "—"}</b>
+                          </div>
+                          <div className="stat">
+                            <label>Deleted</label>
+                            <b>
+                              {report?.case_summary?.total_deleted_recovered ??
+                                report?.case_summary?.total_deleted_found ??
+                                "—"}
+                            </b>
+                          </div>
+                          <div className="stat">
+                            <label>Emails</label>
+                            <b>{report?.case_summary?.total_emails_parsed ?? "—"}</b>
+                          </div>
+                          <div className="stat">
+                            <label>Browser history</label>
+                            <b>
+                              {report?.case_summary?.total_browser_history_entries ??
+                                "—"}
+                            </b>
+                          </div>
+                        </div>
+                        <p style={{ color: "var(--text-2)", fontSize: 14 }}>
+                          Detailed tabs (documents, emails, web, images) are on{" "}
+                          <button
+                            type="button"
+                            className="btn btn-sm"
+                            onClick={() => setView("findings")}
+                          >
+                            Key findings
+                          </button>
+                          . Use <strong>Download report</strong> above for a
+                          PDF that also includes chain of custody.
+                        </p>
+                      </>
+                    )}
                   </div>
                 </div>
               </>
@@ -1201,6 +1813,111 @@ export default function App() {
         </Modal>
       )}
       {toast && <Toast {...toast} />}
+      {addEvOpen && (
+        <Modal title="Add evidence artifact" onClose={() => setAddEvOpen(false)}>
+          <form onSubmit={addEvidenceArtifact}>
+            <div className="note-card" style={{ marginTop: 0 }}>
+              <h4>Non-image files</h4>
+              <p style={{ margin: 0 }}>
+                Photos, exports, notes, or other files. They get a fingerprint and
+                a custody entry, the same idea as disk images.
+              </p>
+            </div>
+            <label>Full path on this machine</label>
+            <div style={{ display: "flex", gap: 8 }}>
+              <input
+                required
+                className="mono"
+                style={{ flex: 1 }}
+                value={evForm.file_path}
+                onChange={(e) => setEvForm({ ...evForm, file_path: e.target.value })}
+                placeholder="/path/to/file"
+              />
+              {typeof window !== "undefined" && window.electronAPI?.openFile && (
+                <button
+                  type="button"
+                  className="btn btn-sm"
+                  onClick={async () => {
+                    const selected = await window.electronAPI.openFile({
+                      title: "Select evidence file",
+                      filters: [{ name: "All files", extensions: ["*"] }],
+                    });
+                    if (!selected) return;
+                    const filePath = Array.isArray(selected) ? selected[0] : selected;
+                    setEvForm((s) => ({ ...s, file_path: filePath }));
+                  }}
+                >
+                  Browse…
+                </button>
+              )}
+            </div>
+            <label>Notes</label>
+            <input
+              value={evForm.notes}
+              onChange={(e) => setEvForm({ ...evForm, notes: e.target.value })}
+            />
+            {error ? <p style={{ color: "#c44" }}>{error}</p> : null}
+            <button type="submit" className="btn btn-primary" disabled={busy}>
+              Register evidence
+            </button>
+          </form>
+        </Modal>
+      )}
+
+      {pathFixOpen && pathFixItem && (
+        <Modal
+          title="Update evidence path"
+          onClose={() => {
+            setPathFixOpen(false);
+            setPathFixItem(null);
+            setError("");
+          }}
+        >
+          <form onSubmit={submitPathFix}>
+            <div className="note-card" style={{ marginTop: 0 }}>
+              <h4>File not found at registered path</h4>
+              <p style={{ margin: 0 }}>
+                Provide the new absolute path on this machine. The file must still
+                match the original SHA-256 fingerprint or the update will be
+                rejected.
+              </p>
+            </div>
+            <label>Previous path</label>
+            <input
+              readOnly
+              className="mono"
+              value={pathFixItem.stored_path || ""}
+            />
+            <label>New path</label>
+            <input
+              required
+              className="mono"
+              placeholder="/path/to/image.E01"
+              value={pathFixValue}
+              onChange={(e) => setPathFixValue(e.target.value)}
+            />
+            {error ? (
+              <p style={{ color: "#c44", fontSize: 13 }}>{error}</p>
+            ) : null}
+            <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
+              <button type="submit" className="btn btn-primary" disabled={busy}>
+                Verify &amp; save path
+              </button>
+              <button
+                type="button"
+                className="btn"
+                onClick={() => {
+                  setPathFixOpen(false);
+                  setPathFixItem(null);
+                }}
+              >
+                Cancel
+              </button>
+            </div>
+          </form>
+        </Modal>
+      )}
+
     </div>
   );
 }

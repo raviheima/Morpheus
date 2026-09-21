@@ -62,7 +62,12 @@ class CaseService:
     def list_cases() -> List[Case]:
         db = SessionLocal()
         try:
-            return db.query(Case).order_by(Case.created_at.desc()).all()
+            return (
+                db.query(Case)
+                .filter(Case.status != "deleted")
+                .order_by(Case.created_at.desc())
+                .all()
+            )
         finally:
             db.close()
 
@@ -313,12 +318,41 @@ class CaseService:
         finally:
             db.close()
 
+    @staticmethod
+    def reopen_case(case_number: str, reopened_by: str) -> Case:
+        """Reopen a closed case and log the status change."""
+        db = SessionLocal()
+        try:
+            case = db.query(Case).filter(Case.case_number == case_number).first()
+            if not case:
+                raise ValueError(f"Case not found: {case_number}")
+            if case.status != "closed":
+                raise ValueError("Case is not closed.")
+
+            case.status = "open"
+            db.add(
+                ChainOfCustody(
+                    case_id=case.id,
+                    action="case_reopened",
+                    actor=reopened_by,
+                    details=json.dumps({"previous_status": "closed"}),
+                )
+            )
+            db.commit()
+            db.refresh(case)
+            return case
+        except Exception:
+            db.rollback()
+            raise
+        finally:
+            db.close()
+
 # delete case from db
     @staticmethod
     def delete_case(case_number: str, deleted_by: str) -> None:
         """
-        Permanently delete a case and all related records.
-        This is irreversible.
+        Soft-delete a case. Chain of custody is NEVER removed.
+        Related evidence rows stay for audit; case status becomes "deleted".
         """
         db = SessionLocal()
         try:
@@ -326,7 +360,6 @@ class CaseService:
             if not case:
                 raise ValueError(f"Case not found: {case_number}")
 
-            # Log the deletion first (while the case still exists)
             custody = ChainOfCustody(
                 case_id=case.id,
                 action="case_deleted",
@@ -334,16 +367,11 @@ class CaseService:
                 details=json.dumps({
                     "case_name": case.case_name,
                     "organisation": case.organisation,
+                    "note": "Case marked deleted; custody log retained",
                 }),
             )
             db.add(custody)
-            db.flush()
-
-            # Delete related records
-            db.query(EvidenceItem).filter(EvidenceItem.case_id == case.id).delete()
-            db.query(ChainOfCustody).filter(ChainOfCustody.case_id == case.id).delete()
-            db.delete(case)
-
+            case.status = "deleted"
             db.commit()
         except Exception:
             db.rollback()

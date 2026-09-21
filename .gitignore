@@ -5,9 +5,11 @@
 __pycache__/
 *.py[cod]
 *.db
+backend/.env
 CASE*
 *.zip
 *test*
+*.env
 
 # Generated analysis and evidence exports
 backend/analysis_report*

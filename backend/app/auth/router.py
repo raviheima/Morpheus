@@ -14,6 +14,8 @@ from app.auth.security import (
 )
 from app.auth.models import User
 from app.auth.schemas import UserCreate, UserResponse, Token
+from app.database import AuditLog
+from app.services.audit_service import log_general_action
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -30,6 +32,7 @@ def login(
             detail="Incorrect username or password",
             headers={"WWW-Authenticate": "Bearer"},
         )
+    log_general_action("signed_in", user.username, {"role": user.role})
     access_token = create_access_token(
         data={"sub": user.username, "role": user.role},
         expires_delta=timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES),
@@ -64,3 +67,24 @@ def create_user(
 @router.get("/me", response_model=UserResponse)
 def read_me(current_user: User = Depends(get_current_user)):
     return current_user
+
+
+@router.get("/audit", response_model=list[dict])
+def audit_log(
+    db: Session = Depends(get_db),
+    _: User = Depends(get_current_user),
+):
+    """Return the global audit trail for authenticated demo users."""
+    return [
+        {
+            "id": entry.id,
+            "case_id": entry.case_id,
+            "action": entry.action,
+            "actor": entry.actor,
+            "timestamp": entry.timestamp,
+            "details": entry.details,
+        }
+        for entry in db.query(AuditLog)
+        .order_by(AuditLog.timestamp.desc(), AuditLog.id.desc())
+        .limit(500)
+    ]

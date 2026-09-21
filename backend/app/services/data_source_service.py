@@ -122,3 +122,66 @@ class DataSourceService:
             return db.query(DataSource).filter(DataSource.id == ds_id).first()
         finally:
             db.close()
+
+
+    @staticmethod
+    def update_path(
+        ds_id: int,
+        new_path: str,
+        actor: str,
+    ) -> DataSource:
+        """
+        Update stored_path when the file moved but content is unchanged.
+        Rejects if file missing or SHA-256 does not match the registered fingerprint.
+        """
+        path = Path(new_path).resolve()
+        if not path.is_file():
+            raise FileNotFoundError(f"File not found at new path: {new_path}")
+
+        db = SessionLocal()
+        try:
+            ds = db.query(DataSource).filter(DataSource.id == ds_id).first()
+            if not ds:
+                raise ValueError(f"Data source not found: {ds_id}")
+
+            hash_info = calculate_hashes(str(path))
+            actual = hash_info["sha256"]
+            if actual.lower() != (ds.sha256_hash or "").lower():
+                raise ValueError(
+                    "SHA-256 mismatch: the file at the new path does not match the "
+                    "fingerprint recorded at registration. Path was not updated. "
+                    f"Expected {ds.sha256_hash[:16]}…, got {actual[:16]}…."
+                )
+
+            old_path = ds.stored_path
+            ds.stored_path = str(path)
+            ds.original_filename = hash_info.get("filename") or path.name
+            ds.file_size = hash_info.get("size") or ds.file_size
+            ds.is_consistent = True
+            ds.last_warning = None
+            ds.last_verified_at = None  # caller may re-verify
+
+            custody = ChainOfCustody(
+                case_id=ds.case_id,
+                data_source_id=ds.id,
+                action="path_updated",
+                actor=actor,
+                details=json.dumps(
+                    {
+                        "filename": ds.original_filename,
+                        "old_path": old_path,
+                        "new_path": str(path),
+                        "sha256": ds.sha256_hash,
+                        "note": "Location updated; fingerprint confirmed unchanged",
+                    }
+                ),
+            )
+            db.add(custody)
+            db.commit()
+            db.refresh(ds)
+            return ds
+        except Exception:
+            db.rollback()
+            raise
+        finally:
+            db.close()

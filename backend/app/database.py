@@ -10,6 +10,7 @@ from sqlalchemy import (
     Boolean,
 )
 from sqlalchemy.orm import declarative_base, sessionmaker, relationship
+from sqlalchemy import event
 from datetime import datetime, timezone
 
 DATABASE_URL = "sqlite:///morpheus.db"
@@ -119,6 +120,33 @@ class ChainOfCustody(Base):
     details = Column(Text, nullable=True)
 
     case = relationship("Case", back_populates="custody_logs")
+
+
+class AuditLog(Base):
+    """Global audit trail for every application action."""
+
+    __tablename__ = "audit_logs"
+
+    id = Column(Integer, primary_key=True, index=True)
+    case_id = Column(Integer, ForeignKey("cases.id"), nullable=True, index=True)
+    action = Column(String(100), nullable=False)
+    actor = Column(String(100), nullable=False)
+    timestamp = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    details = Column(Text, nullable=True)
+
+
+@event.listens_for(ChainOfCustody, "after_insert")
+def mirror_custody_to_audit_log(mapper, connection, target):
+    """Keep the global audit trail in sync with every case custody event."""
+    connection.execute(
+        AuditLog.__table__.insert().values(
+            case_id=target.case_id,
+            action=target.action,
+            actor=target.actor,
+            timestamp=target.timestamp,
+            details=target.details,
+        )
+    )
 
 
 def init_db():

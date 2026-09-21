@@ -117,3 +117,10 @@ class IntegrityCheckResponse(BaseModel):
     ok: int
     warnings: int
     items: List[IntegrityItemResult]
+
+
+# ---------- Path update ----------
+
+class DataSourcePathUpdate(BaseModel):
+    """Re-point a data source to a new location; SHA-256 must still match."""
+    new_path: str = Field(..., description="Absolute path where the same file now lives")

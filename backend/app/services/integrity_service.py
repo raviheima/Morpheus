@@ -90,22 +90,24 @@ class IntegrityService:
             warnings = sum(1 for i in items if i.status != "ok")
             ok_count = sum(1 for i in items if i.status == "ok")
 
-            # custody log
-            custody = ChainOfCustody(
-                case_id=case.id,
-                action="integrity_check",
-                actor=actor,
-                details=json.dumps(
-                    {
-                        "total": len(items),
-                        "ok": ok_count,
-                        "warnings": warnings,
-                        "items": [i.model_dump() for i in items],
-                    },
-                    default=str,
-                ),
-            )
-            db.add(custody)
+            # Report generation performs an internal verification; it should not
+            # add a noisy custody event for every PDF download.
+            if actor != "certificate":
+                custody = ChainOfCustody(
+                    case_id=case.id,
+                    action="integrity_check",
+                    actor=actor,
+                    details=json.dumps(
+                        {
+                            "total": len(items),
+                            "ok": ok_count,
+                            "warnings": warnings,
+                            "items": [i.model_dump() for i in items],
+                        },
+                        default=str,
+                    ),
+                )
+                db.add(custody)
             db.commit()
 
             return IntegrityCheckResponse(
