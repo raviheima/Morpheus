@@ -25,8 +25,6 @@ Morpheus/
 ├── backend/     FastAPI API, database, hashing, analysis engine, reports
 ├── frontend/    React/Vite examiner workspace
 ├── cli/         CLI utilities and case workflows
-├── docs/        Project documentation
-└── nightmare_case.json  Example/demo case data
 ```
 
 The frontend communicates with the backend over HTTP. The backend stores case metadata and custody records in the configured SQLAlchemy database and reads evidence from paths on the Morpheus host.
