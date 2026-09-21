@@ -1,54 +1,48 @@
-import { useCallback, useEffect, useState } from "react";
-import "./styles.css";
-
-const API = import.meta.env.VITE_API_BASE || "http://localhost:8000";
-
-async function api(path, { token, method = "GET", body, form } = {}) {
-  const headers = {};
-  if (token) headers.Authorization = `Bearer ${token}`;
-  let payload = body;
-  if (form) {
-    headers["Content-Type"] = "application/x-www-form-urlencoded";
-    payload = new URLSearchParams(form);
-  } else if (body !== undefined) {
-    headers["Content-Type"] = "application/json";
-    payload = JSON.stringify(body);
-  }
-  const res = await fetch(`${API}${path}`, { method, headers, body: payload });
-  const ct = res.headers.get("content-type") || "";
-  const data = ct.includes("application/json")
-    ? await res.json()
-    : await res.blob();
-  if (!res.ok) {
-    const msg =
-      data && typeof data === "object" && !(data instanceof Blob)
-        ? data.detail || JSON.stringify(data)
-        : res.statusText;
-    throw new Error(typeof msg === "string" ? msg : "Request failed");
-  }
-  return data;
-}
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { api, downloadBlob } from "./lib/api";
+import { DEMO_PATH, pickReport } from "./lib/format";
+import Modal from "./components/Modal";
+import Toast from "./components/Toast";
+import ProgressBar from "./components/ProgressBar";
+import TopBar from "./components/TopBar";
+import FindingsReport from "./components/FindingsReport";
 
 export default function App() {
-  const [token, setToken] = useState(() => localStorage.getItem("mz_token") || "");
-  const [user, setUser] = useState(() => localStorage.getItem("mz_user") || "");
-  const [screen, setScreen] = useState(token ? "hub" : "landing");
+  const [token, setToken] = useState(
+    () => localStorage.getItem("mz_token") || ""
+  );
+  const [user, setUser] = useState(
+    () => localStorage.getItem("mz_user") || ""
+  );
+  const [screen, setScreen] = useState(() => (token ? "hub" : "landing"));
   const [view, setView] = useState("overview");
+
   const [cases, setCases] = useState([]);
   const [active, setActive] = useState(null);
   const [dataSources, setDataSources] = useState([]);
   const [integrity, setIntegrity] = useState(null);
-  const [analysis, setAnalysis] = useState(null);
-  const [jobId, setJobId] = useState(null);
-  const [jobStatus, setJobStatus] = useState(null);
+  const [custody, setCustody] = useState(null);
+  const [analysisBySource, setAnalysisBySource] = useState({});
+  const [activeAnalysis, setActiveAnalysis] = useState(null);
+  const [activeJobUi, setActiveJobUi] = useState(null);
+
+  const [imagePreviewUrl, setImagePreviewUrl] = useState(null);
+  const [imagePreviewName, setImagePreviewName] = useState("");
+
   const [busy, setBusy] = useState(false);
+  const [hashing, setHashing] = useState(false);
+  const [hashStartedAt, setHashStartedAt] = useState(null);
   const [error, setError] = useState("");
   const [toast, setToast] = useState(null);
 
   const [loginOpen, setLoginOpen] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
   const [addSrcOpen, setAddSrcOpen] = useState(false);
-  const [loginForm, setLoginForm] = useState({ username: "admin", password: "admin123" });
+
+  const [loginForm, setLoginForm] = useState({
+    username: "admin",
+    password: "admin123",
+  });
   const [caseForm, setCaseForm] = useState({
     case_name: "",
     examiner_name: "",
@@ -60,12 +54,13 @@ export default function App() {
     file_path: "",
     label: "",
     collected_by: "",
+    fileName: "",
   });
 
-  const notify = (title, detail) => {
+  const notify = useCallback((title, detail) => {
     setToast({ title, detail });
-    setTimeout(() => setToast(null), 3500);
-  };
+    setTimeout(() => setToast(null), 4000);
+  }, []);
 
   const saveSession = (t, u) => {
     localStorage.setItem("mz_token", t);
@@ -80,19 +75,48 @@ export default function App() {
     setToken("");
     setUser("");
     setActive(null);
-    setAnalysis(null);
+    setActiveAnalysis(null);
     setScreen("landing");
   };
 
-  const loadCases = useCallback(async (t = token) => {
-    if (!t) return;
-    const data = await api("/cases/", { token: t });
-    setCases(Array.isArray(data) ? data : data.cases || []);
-  }, [token]);
+  const loadCases = useCallback(
+    async (t = token) => {
+      if (!t) return;
+      const data = await api("/cases/", { token: t });
+      setCases(Array.isArray(data) ? data : data.cases || []);
+    },
+    [token]
+  );
 
   useEffect(() => {
     if (token) loadCases().catch(() => {});
   }, [token, loadCases]);
+
+  useEffect(() => {
+    return () => {
+      if (imagePreviewUrl) URL.revokeObjectURL(imagePreviewUrl);
+    };
+  }, [imagePreviewUrl]);
+
+  const refreshCaseFiles = async (caseNumber, t = token) => {
+    try {
+      const ds = await api(`/data-sources/${caseNumber}`, { token: t });
+      setDataSources(Array.isArray(ds) ? ds : []);
+    } catch {
+      setDataSources([]);
+    }
+  };
+
+  const loadCustody = async (caseNumber) => {
+    try {
+      const data = await api(`/data-sources/${caseNumber}/custody-report`, {
+        token,
+      });
+      setCustody(data);
+    } catch {
+      setCustody(null);
+    }
+  };
 
   const login = async (e) => {
     e.preventDefault();
@@ -129,7 +153,7 @@ export default function App() {
         case_number: created.case_number,
         case_name: created.case_name || caseForm.case_name,
         examiner_name: created.examiner_name || caseForm.examiner_name,
-        organisation: created.organisation,
+        organisation: created.organisation || caseForm.organisation,
         status: created.status || "open",
       };
       setCreateOpen(false);
@@ -146,23 +170,66 @@ export default function App() {
   const openCase = async (c) => {
     setActive(c);
     setView("overview");
-    setAnalysis(null);
     setIntegrity(null);
-    setJobId(null);
-    setJobStatus(null);
+    setActiveAnalysis(null);
+    setActiveJobUi(null);
+    setAnalysisBySource({});
+    setImagePreviewUrl(null);
     setScreen("workspace");
+    await refreshCaseFiles(c.case_number);
+    await loadCustody(c.case_number);
+  };
+
+  const closeCase = async () => {
+    if (!active) return;
+    setBusy(true);
     try {
-      const ds = await api(`/data-sources/${c.case_number}`, { token });
-      setDataSources(Array.isArray(ds) ? ds : []);
-    } catch {
-      setDataSources([]);
+      await api(`/cases/${active.case_number}/close`, {
+        token,
+        method: "POST",
+      });
+      notify("Case closed", active.case_number);
+      await loadCases();
+      setScreen("hub");
+    } catch (e) {
+      notify("Close failed", e.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const deleteCase = async () => {
+    if (!active) return;
+    if (
+      !window.confirm(
+        `Delete case ${active.case_number}? This cannot be undone.`
+      )
+    )
+      return;
+    setBusy(true);
+    try {
+      await api(`/cases/${active.case_number}`, { token, method: "DELETE" });
+      notify("Case deleted", active.case_number);
+      setActive(null);
+      await loadCases();
+      setScreen("hub");
+    } catch (e) {
+      notify("Delete failed", e.message);
+    } finally {
+      setBusy(false);
     }
   };
 
   const addDataSource = async (e) => {
     e.preventDefault();
     if (!active) return;
+    if (!srcForm.file_path.trim()) {
+      setError("Enter the full path on the Morpheus analysis machine.");
+      return;
+    }
     setBusy(true);
+    setHashing(true);
+    setHashStartedAt(Date.now());
     setError("");
     try {
       await api("/data-sources/", {
@@ -170,24 +237,31 @@ export default function App() {
         method: "POST",
         body: {
           case_number: active.case_number,
-          file_path: srcForm.file_path,
-          label: srcForm.label || undefined,
+          file_path: srcForm.file_path.trim(),
+          label: srcForm.label || srcForm.fileName || undefined,
           collected_by: srcForm.collected_by || user,
         },
       });
       setAddSrcOpen(false);
-      const ds = await api(`/data-sources/${active.case_number}`, { token });
-      setDataSources(Array.isArray(ds) ? ds : []);
+      setSrcForm({ file_path: "", label: "", collected_by: user, fileName: "" });
+      await refreshCaseFiles(active.case_number);
+      await loadCustody(active.case_number);
       notify("Data source registered", "Fingerprint stored");
     } catch (err) {
       setError(err.message);
     } finally {
       setBusy(false);
+      setHashing(false);
+      setHashStartedAt(null);
     }
   };
 
   const runIntegrity = async () => {
     if (!active) return;
+    if (dataSources.length === 0) {
+      notify("Nothing to verify", "Add a disk image data source first");
+      return;
+    }
     setBusy(true);
     try {
       const data = await api(
@@ -195,12 +269,13 @@ export default function App() {
         { token, method: "POST" }
       );
       setIntegrity(data);
+      await loadCustody(active.case_number);
       notify(
-        data.warnings === 0 ? "Integrity OK" : "Integrity issues",
-        `${data.ok} ok, ${data.warnings} warning(s)`
+        data.warnings === 0 ? "Integrity verified" : "Integrity problems",
+        `${data.ok ?? 0} ok · ${data.warnings ?? 0} warning(s)`
       );
     } catch (err) {
-      notify("Integrity check failed", err.message);
+      notify("Integrity failed", err.message);
     } finally {
       setBusy(false);
     }
@@ -214,12 +289,7 @@ export default function App() {
         `/data-sources/${active.case_number}/certificate.pdf`,
         { token }
       );
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = `integrity_${active.case_number}.pdf`;
-      a.click();
-      URL.revokeObjectURL(url);
+      downloadBlob(blob, `integrity_${active.case_number}.pdf`);
       notify("Certificate downloaded", active.case_number);
     } catch (err) {
       notify("Certificate failed", err.message);
@@ -228,10 +298,9 @@ export default function App() {
     }
   };
 
-  const startAnalysis = async () => {
-    const primary = dataSources[0];
-    if (!primary?.stored_path) {
-      notify("No data source", "Register a forensic image first");
+  const startAnalysisFor = async (ds) => {
+    if (!ds?.stored_path) {
+      notify("Missing path", "Data source has no stored path");
       return;
     }
     setBusy(true);
@@ -240,34 +309,61 @@ export default function App() {
         token,
         method: "POST",
         body: {
-          evidence_path: primary.stored_path,
+          evidence_path: ds.stored_path,
           export_artifacts: true,
           build_timeline: false,
         },
       });
-      setJobId(res.job_id);
-      setJobStatus(res.status || "queued");
-      notify("Analysis started", res.job_id);
-      pollJob(res.job_id);
+      setAnalysisBySource((prev) => ({
+        ...prev,
+        [ds.id]: { status: res.status || "queued", jobId: res.job_id },
+      }));
+      setActiveJobUi({
+        sourceId: ds.id,
+        jobId: res.job_id,
+        status: res.status || "queued",
+        progress: 0,
+        phase: "queued",
+      });
+      notify("Analysis started", ds.label || ds.original_filename);
+      pollJob(ds.id, res.job_id);
     } catch (err) {
-      notify("Analysis failed to start", err.message);
+      notify("Analyze failed", err.message);
     } finally {
       setBusy(false);
     }
   };
 
-  const pollJob = async (id) => {
+  const pollJob = async (sourceId, jobId) => {
     const tick = async () => {
       try {
-        const job = await api(`/analysis/jobs/${id}`, { token });
-        setJobStatus(job.status);
+        const job = await api(`/analysis/jobs/${jobId}`, { token });
+        setAnalysisBySource((prev) => ({
+          ...prev,
+          [sourceId]: {
+            status: job.status,
+            jobId,
+            result: job.result || null,
+            error: job.error,
+          },
+        }));
+        setActiveJobUi({
+          sourceId,
+          jobId,
+          status: job.status,
+          progress: job.progress,
+          phase: job.phase || job.status,
+          eta_seconds: job.eta_seconds,
+        });
         if (job.status === "completed") {
-          setAnalysis(job.result || job);
-          notify("Analysis complete", "Results loaded");
+          setActiveAnalysis(job.result || job);
+          setView("findings");
+          notify("Analysis complete", "Report ready");
+          if (active?.case_number) await loadCustody(active.case_number);
           return;
         }
         if (job.status === "failed") {
-          notify("Analysis failed", job.error || "Unknown error");
+          notify("Analysis failed", job.error || "Error");
           return;
         }
         setTimeout(tick, 2000);
@@ -278,72 +374,93 @@ export default function App() {
     tick();
   };
 
-  /* —— LANDING —— */
+  const report = useMemo(() => pickReport(activeAnalysis), [activeAnalysis]);
+
+  const extractArtifact = async (art) => {
+    const path = art.path || art.file_path;
+    const ds = dataSources.find((d) => d.stored_path) || dataSources[0];
+    if (!ds?.stored_path || !path) {
+      notify("Extract unavailable", "Need data source and path");
+      return;
+    }
+    setBusy(true);
+    try {
+      const blob = await api("/analysis/export-file", {
+        token,
+        method: "POST",
+        body: { evidence_path: ds.stored_path, file_path: path },
+      });
+      const name =
+        art.name || String(path).split(/[/\\]/).pop() || "artifact.bin";
+      downloadBlob(blob, name);
+      notify("Extracted", name);
+    } catch (err) {
+      notify("Extract failed", err.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const previewImage = async (art) => {
+    const path = art.path || art.file_path;
+    const ds = dataSources.find((d) => d.stored_path) || dataSources[0];
+    if (!ds?.stored_path || !path) {
+      notify("Preview unavailable", "Need data source and image path");
+      return;
+    }
+    setBusy(true);
+    try {
+      const blob = await api("/analysis/export-file", {
+        token,
+        method: "POST",
+        body: { evidence_path: ds.stored_path, file_path: path },
+      });
+      if (imagePreviewUrl) URL.revokeObjectURL(imagePreviewUrl);
+      const url = URL.createObjectURL(blob);
+      setImagePreviewUrl(url);
+      setImagePreviewName(art.name || path);
+      setView("findings");
+      notify("Image loaded", art.name || path);
+    } catch (err) {
+      notify("Image preview failed", err.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const hasFiles = dataSources.length > 0;
+  const hashElapsed = hashStartedAt
+    ? Math.round((Date.now() - hashStartedAt) / 1000)
+    : 0;
+
+  /* ───── LANDING ───── */
   if (screen === "landing") {
     return (
       <div className="landing">
         <header className="land-header">
           <span className="topbar-brand">MORPHEUS</span>
-          <div>
-            <button type="button" className="btn btn-ghost" onClick={() => setLoginOpen(true)}>
-              Sign in
-            </button>
-            <button
-              type="button"
-              className="btn btn-primary"
-              onClick={() => (token ? setScreen("hub") : setLoginOpen(true))}
-            >
-              Get started
-            </button>
-          </div>
+          <button
+            type="button"
+            className="btn btn-primary"
+            onClick={() => (token ? setScreen("hub") : setLoginOpen(true))}
+          >
+            Get started
+          </button>
         </header>
         <div className="land-hero">
-          <div>
-            <h1>Digital forensics workspace with integrity built into the case</h1>
-            <p>
-              Morpheus registers data sources, verifies fingerprints, maintains chain of custody,
-              and runs Windows disk triage — in one examiner application.
-            </p>
-            <button
-              type="button"
-              className="btn btn-primary"
-              onClick={() => (token ? setScreen("hub") : setLoginOpen(true))}
-            >
-              Get started
-            </button>
-            <ul style={{ marginTop: 16 }}>
-              <li>Integrity verification on data sources and evidence</li>
-              <li>Chain of custody with the investigation</li>
-              <li>Windows E01 / disk image triage</li>
-              <li>Android &amp; iOS support — coming soon</li>
-            </ul>
-          </div>
-          <div className="panel land-card">
-            <div className="panel-title">Investigation workflow</div>
-            <div className="panel-body">
-              <ol>
-                <li>Create a case</li>
-                <li>Register a data source (hash at collection)</li>
-                <li>Verify integrity; review custody</li>
-                <li>Run analysis; export certificate &amp; reports</li>
-              </ol>
-            </div>
-          </div>
-        </div>
-        <div className="land-grid">
-          {[
-            ["Evidence integrity", "Fingerprints at registration; re-verify any time."],
-            ["Chain of custody", "Who handled what, visible on the case and certificate."],
-            ["Windows triage", "Orchestrated analysis of disk images when you run it."],
-            ["Defensible reports", "Integrity certificates and analysis outputs from the same case."],
-          ].map(([t, d]) => (
-            <div key={t} className="panel">
-              <div className="panel-body">
-                <h3>{t}</h3>
-                <p>{d}</p>
-              </div>
-            </div>
-          ))}
+          <h1>Digital forensics with integrity in the workflow</h1>
+          <p>
+            Register disk images, verify fingerprints, keep chain of custody,
+            and run Windows triage — in one examiner workspace. Non-image
+            evidence collection and mobile analysis are on the roadmap.
+          </p>
+          <button
+            type="button"
+            className="btn btn-primary"
+            onClick={() => (token ? setScreen("hub") : setLoginOpen(true))}
+          >
+            Get started
+          </button>
         </div>
         {loginOpen && (
           <Modal title="Sign in" onClose={() => setLoginOpen(false)}>
@@ -351,21 +468,35 @@ export default function App() {
               <label>Username</label>
               <input
                 value={loginForm.username}
-                onChange={(e) => setLoginForm({ ...loginForm, username: e.target.value })}
+                onChange={(e) =>
+                  setLoginForm({ ...loginForm, username: e.target.value })
+                }
+                autoComplete="username"
               />
               <label>Password</label>
               <input
                 type="password"
                 value={loginForm.password}
-                onChange={(e) => setLoginForm({ ...loginForm, password: e.target.value })}
+                onChange={(e) =>
+                  setLoginForm({ ...loginForm, password: e.target.value })
+                }
+                autoComplete="current-password"
               />
               {error && <p className="err-text">{error}</p>}
               <footer>
-                <button type="button" className="btn" onClick={() => setLoginOpen(false)}>
+                <button
+                  type="button"
+                  className="btn"
+                  onClick={() => setLoginOpen(false)}
+                >
                   Cancel
                 </button>
-                <button type="submit" className="btn btn-primary" disabled={busy}>
-                  Sign in
+                <button
+                  type="submit"
+                  className="btn btn-primary"
+                  disabled={busy}
+                >
+                  {busy ? "Signing in…" : "Sign in"}
                 </button>
               </footer>
             </form>
@@ -376,7 +507,7 @@ export default function App() {
     );
   }
 
-  /* —— HUB —— */
+  /* ───── HUB ───── */
   if (screen === "hub") {
     return (
       <div className="app-root">
@@ -384,7 +515,9 @@ export default function App() {
         <div className="main-scroll">
           <div className="hub">
             <h1 className="page-title">Cases</h1>
-            <p className="page-sub">Create an investigation or open an existing case.</p>
+            <p className="page-sub">
+              Create an investigation or open an existing case.
+            </p>
             <div className="hub-tiles">
               <button
                 type="button"
@@ -398,7 +531,13 @@ export default function App() {
                 <strong>Create case</strong>
                 <span>Start a new investigation with custody from the first action.</span>
               </button>
-              <button type="button" className="hub-tile" onClick={() => loadCases().catch((e) => notify("Refresh failed", e.message))}>
+              <button
+                type="button"
+                className="hub-tile"
+                onClick={() =>
+                  loadCases().catch((e) => notify("Refresh failed", e.message))
+                }
+              >
                 <strong>Refresh list</strong>
                 <span>Reload cases from the Morpheus API.</span>
               </button>
@@ -407,7 +546,7 @@ export default function App() {
               <div className="panel-title">Registered cases</div>
               <div className="panel-body" style={{ padding: 0 }}>
                 {cases.length === 0 ? (
-                  <div className="empty-state">No cases yet. Create one to begin.</div>
+                  <div className="empty">No cases yet. Create one to begin.</div>
                 ) : (
                   <table className="data">
                     <thead>
@@ -427,7 +566,11 @@ export default function App() {
                           <td>{c.examiner_name}</td>
                           <td>{c.status}</td>
                           <td>
-                            <button type="button" className="btn" onClick={() => openCase(c)}>
+                            <button
+                              type="button"
+                              className="btn btn-sm"
+                              onClick={() => openCase(c)}
+                            >
                               Open
                             </button>
                           </td>
@@ -447,7 +590,9 @@ export default function App() {
               <input
                 required
                 value={caseForm.case_name}
-                onChange={(e) => setCaseForm({ ...caseForm, case_name: e.target.value })}
+                onChange={(e) =>
+                  setCaseForm({ ...caseForm, case_name: e.target.value })
+                }
               />
               <div className="row-2">
                 <div>
@@ -455,14 +600,24 @@ export default function App() {
                   <input
                     required
                     value={caseForm.examiner_name}
-                    onChange={(e) => setCaseForm({ ...caseForm, examiner_name: e.target.value })}
+                    onChange={(e) =>
+                      setCaseForm({
+                        ...caseForm,
+                        examiner_name: e.target.value,
+                      })
+                    }
                   />
                 </div>
                 <div>
                   <label>Organisation</label>
                   <input
                     value={caseForm.organisation}
-                    onChange={(e) => setCaseForm({ ...caseForm, organisation: e.target.value })}
+                    onChange={(e) =>
+                      setCaseForm({
+                        ...caseForm,
+                        organisation: e.target.value,
+                      })
+                    }
                   />
                 </div>
               </div>
@@ -470,20 +625,32 @@ export default function App() {
               <input
                 type="email"
                 value={caseForm.examiner_email}
-                onChange={(e) => setCaseForm({ ...caseForm, examiner_email: e.target.value })}
+                onChange={(e) =>
+                  setCaseForm({ ...caseForm, examiner_email: e.target.value })
+                }
               />
               <label>Description</label>
               <textarea
                 value={caseForm.description}
-                onChange={(e) => setCaseForm({ ...caseForm, description: e.target.value })}
+                onChange={(e) =>
+                  setCaseForm({ ...caseForm, description: e.target.value })
+                }
               />
               {error && <p className="err-text">{error}</p>}
               <footer>
-                <button type="button" className="btn" onClick={() => setCreateOpen(false)}>
+                <button
+                  type="button"
+                  className="btn"
+                  onClick={() => setCreateOpen(false)}
+                >
                   Cancel
                 </button>
-                <button type="submit" className="btn btn-primary" disabled={busy}>
-                  Create &amp; open
+                <button
+                  type="submit"
+                  className="btn btn-primary"
+                  disabled={busy}
+                >
+                  {busy ? "Creating…" : "Create & open"}
                 </button>
               </footer>
             </form>
@@ -494,15 +661,14 @@ export default function App() {
     );
   }
 
-  /* —— WORKSPACE —— */
-  const summary = analysis?.report_summary || analysis?.summary || null;
-  const preview = analysis?.artifacts_preview || [];
-
+  /* ───── WORKSPACE ───── */
   return (
     <div className="app-root">
       <TopBar
         user={user}
-        caseLabel={active ? `${active.case_number} — ${active.case_name}` : ""}
+        caseLabel={
+          active ? `${active.case_number} — ${active.case_name}` : ""
+        }
         onLogout={logout}
         onCases={() => setScreen("hub")}
       />
@@ -511,10 +677,11 @@ export default function App() {
           <div className="sidebar-section">Investigation</div>
           {[
             ["overview", "Case overview"],
-            ["evidence", "Evidence sources"],
-            ["analysis", "Analyze evidence"],
+            ["sources", "Data sources"],
+            ["findings", "Key findings"],
             ["custody", "Chain of custody"],
             ["reports", "Reports"],
+            ["about", "About & roadmap"],
           ].map(([id, label]) => (
             <button
               key={id}
@@ -527,10 +694,10 @@ export default function App() {
           ))}
           <div className="sidebar-section">Roadmap</div>
           <button type="button" className="nav-item" disabled>
-            Artifact browser <span className="badge">Soon</span>
+            Evidence collection <span className="badge">Soon</span>
           </button>
           <button type="button" className="nav-item" disabled>
-            Mobile (Android / iOS) <span className="badge">Soon</span>
+            Android / iOS <span className="badge">Soon</span>
           </button>
           <div className="sidebar-foot">
             Signed in as <strong>{user}</strong>
@@ -539,20 +706,44 @@ export default function App() {
 
         <div className="main">
           <div className="main-scroll">
+            {hashing && (
+              <div className="panel">
+                <div className="panel-body">
+                  <ProgressBar
+                    value={null}
+                    label="Computing SHA-256 fingerprint…"
+                    sub={`Elapsed ${hashElapsed}s · Large images can take several minutes.`}
+                  />
+                </div>
+              </div>
+            )}
+            {activeJobUi &&
+              !["completed", "failed"].includes(activeJobUi.status) && (
+                <div className="panel">
+                  <div className="panel-body">
+                    <ProgressBar
+                      value={activeJobUi.progress}
+                      label={`Analysis · ${activeJobUi.phase || activeJobUi.status}`}
+                      sub="Status updates every few seconds"
+                    />
+                  </div>
+                </div>
+              )}
+
             {view === "overview" && (
               <>
                 <h1 className="page-title">Case overview</h1>
                 <p className="page-sub">
-                  {active?.case_number} · Integrity and analysis results for this investigation
+                  {active?.case_number} · Integrity, custody, and disk-image
+                  analysis
                 </p>
-
                 <div
                   className={`banner ${
                     integrity
                       ? integrity.warnings === 0
                         ? "ok"
                         : "warn"
-                      : "info"
+                      : ""
                   }`}
                 >
                   <div>
@@ -561,246 +752,252 @@ export default function App() {
                         ? integrity.warnings === 0
                           ? "Integrity check passed"
                           : "Integrity problems detected"
-                        : "Integrity has not been run for this case yet"}
+                        : "Integrity has not been run yet"}
                     </strong>
                     <span>
                       {integrity
-                        ? `${integrity.ok} file(s) ok, ${integrity.warnings} warning(s)`
-                        : "Register a data source, then verify fingerprints."}
+                        ? `${integrity.ok ?? 0} file(s) ok · ${integrity.warnings ?? 0} warning(s)`
+                        : "Register a disk image, then verify fingerprints."}
                     </span>
                   </div>
-                  <button type="button" className="btn" disabled={busy} onClick={runIntegrity}>
+                  <button
+                    type="button"
+                    className="btn"
+                    disabled={busy || !hasFiles}
+                    onClick={runIntegrity}
+                  >
                     Verify integrity
                   </button>
                 </div>
-
-                <div className="toolbar">
-                  <button type="button" className="btn" onClick={() => setAddSrcOpen(true)}>
+                <div className="panel-actions">
+                  <button
+                    type="button"
+                    className="btn btn-primary"
+                    onClick={() => {
+                      setError("");
+                      setSrcForm({
+                        file_path: "",
+                        label: "",
+                        collected_by: user,
+                        fileName: "",
+                      });
+                      setAddSrcOpen(true);
+                    }}
+                  >
                     Add data source
                   </button>
-                  <button type="button" className="btn btn-primary" disabled={busy} onClick={startAnalysis}>
-                    Analyze evidence
+                  <button
+                    type="button"
+                    className="btn"
+                    disabled={busy || !hasFiles}
+                    onClick={runIntegrity}
+                  >
+                    Verify integrity
                   </button>
-                  <button type="button" className="btn" disabled={busy} onClick={downloadCertificate}>
+                  <button
+                    type="button"
+                    className="btn"
+                    disabled={busy}
+                    onClick={downloadCertificate}
+                  >
                     Integrity certificate
                   </button>
+                  <button
+                    type="button"
+                    className="btn"
+                    disabled={busy}
+                    onClick={closeCase}
+                  >
+                    Close case
+                  </button>
+                  <button
+                    type="button"
+                    className="btn btn-danger"
+                    disabled={busy}
+                    onClick={deleteCase}
+                  >
+                    Delete case
+                  </button>
                 </div>
-
                 <div className="stats">
                   <div className="stat">
                     <label>Data sources</label>
                     <b>{dataSources.length}</b>
-                    <small>Registered images</small>
+                    <small>Disk images</small>
                   </div>
                   <div className="stat">
-                    <label>Analysis</label>
-                    <b>{jobStatus || (analysis ? "done" : "—")}</b>
-                    <small>{jobId ? `Job ${jobId.slice(0, 8)}…` : "Not started"}</small>
+                    <label>Files (last report)</label>
+                    <b>
+                      {report?.case_summary?.total_files_scanned ?? "—"}
+                    </b>
+                    <small>From analysis</small>
                   </div>
                   <div className="stat">
-                    <label>Artifacts (preview)</label>
-                    <b>{analysis?.artifact_count ?? "—"}</b>
-                    <small>From last completed job</small>
+                    <label>Deleted</label>
+                    <b>
+                      {report?.case_summary?.total_deleted_recovered ?? "—"}
+                    </b>
+                    <small>Engine total</small>
                   </div>
                   <div className="stat">
                     <label>Integrity</label>
-                    <b>{integrity ? (integrity.warnings === 0 ? "OK" : "Warn") : "—"}</b>
+                    <b>
+                      {integrity
+                        ? integrity.warnings === 0
+                          ? "OK"
+                          : "Warn"
+                        : "—"}
+                    </b>
                     <small>Hash vs collection</small>
                   </div>
                 </div>
-
                 <div className="grid-2">
                   <div className="panel">
-                    <div className="panel-title">Evidence sources</div>
+                    <div className="panel-title">Data sources</div>
                     <div className="panel-body">
                       {dataSources.length === 0 ? (
-                        <div className="empty-state">
-                          No data sources. Add a forensic image path to begin.
+                        <div className="empty">
+                          Add a forensic disk image to begin analysis.
                         </div>
                       ) : (
                         dataSources.map((ds) => (
-                          <div key={ds.id} style={{ marginBottom: 12 }}>
-                            <strong>{ds.label || ds.original_filename}</strong>
-                            <div className="mono" style={{ color: "var(--muted)" }}>
+                          <div key={ds.id} style={{ marginBottom: 14 }}>
+                            <strong>
+                              {ds.label || ds.original_filename}
+                            </strong>
+                            <div
+                              className="mono"
+                              style={{ color: "var(--muted)" }}
+                            >
                               {ds.stored_path}
                             </div>
-                            <div style={{ marginTop: 4 }}>
-                              <span className={`tag ${ds.is_consistent === false ? "err" : "ok"}`}>
-                                {ds.is_consistent === false ? "Inconsistent" : "Tracked"}
-                              </span>{" "}
-                              <span className="mono">{ds.sha256_hash?.slice(0, 20)}…</span>
+                            <div style={{ marginTop: 10 }}>
+                              <button
+                                type="button"
+                                className="btn btn-sm btn-primary"
+                                disabled={busy}
+                                onClick={() => startAnalysisFor(ds)}
+                              >
+                                Analyze
+                              </button>{" "}
+                              {analysisBySource[ds.id]?.status && (
+                                <span className="tag">
+                                  {analysisBySource[ds.id].status}
+                                </span>
+                              )}
                             </div>
                           </div>
                         ))
                       )}
                     </div>
                   </div>
-
                   <div className="panel">
-                    <div className="panel-title">Analysis summary</div>
+                    <div className="panel-title">Recent custody</div>
                     <div className="panel-body">
-                      {!analysis ? (
-                        <div className="empty-state">
-                          Run <strong>Analyze evidence</strong> to load orchestrator results into
-                          this case. Nothing is hard-coded.
-                        </div>
+                      {!(custody?.custody_timeline || []).length ? (
+                        <div className="empty">No custody events yet.</div>
                       ) : (
-                        <>
-                          <div className="meta-grid">
-                            <div>
-                              <span>Artifact count</span>
-                              <strong>{analysis.artifact_count ?? "—"}</strong>
+                        (custody.custody_timeline || [])
+                          .slice(0, 8)
+                          .map((e, i) => (
+                            <div key={i} className="finding">
+                              <span className="dot" />
+                              <div>
+                                <strong>
+                                  {e.what} — {e.who}
+                                </strong>
+                                <small>{e.when}</small>
+                              </div>
                             </div>
-                            <div>
-                              <span>Job</span>
-                              <strong>{jobStatus || "completed"}</strong>
-                            </div>
-                            <div>
-                              <span>Manifest</span>
-                              <strong className="mono" style={{ fontSize: 11 }}>
-                                {analysis.manifest_path
-                                  ? String(analysis.manifest_path).slice(-40)
-                                  : "—"}
-                              </strong>
-                            </div>
-                          </div>
-                          {preview.length > 0 && (
-                            <div style={{ marginTop: 12 }}>
-                              <strong style={{ fontSize: 12 }}>Preview artifacts</strong>
-                              {preview.slice(0, 8).map((a, i) => (
-                                <div key={i} className="finding">
-                                  <span className="dot" />
-                                  <div>
-                                    <strong>
-                                      {a.artifact_type || a.type || "artifact"} —{" "}
-                                      {a.name || a.path || "item"}
-                                    </strong>
-                                    <small className="mono">{a.path || ""}</small>
-                                  </div>
-                                </div>
-                              ))}
-                            </div>
-                          )}
-                          {summary && (
-                            <pre
-                              style={{
-                                marginTop: 12,
-                                fontSize: 11,
-                                overflow: "auto",
-                                maxHeight: 180,
-                                background: "#f5f7f8",
-                                padding: 8,
-                                border: "1px solid var(--border)",
-                              }}
-                            >
-                              {typeof summary === "string"
-                                ? summary
-                                : JSON.stringify(summary, null, 2)}
-                            </pre>
-                          )}
-                        </>
+                          ))
                       )}
+                      <button
+                        type="button"
+                        className="btn btn-sm"
+                        style={{ marginTop: 10 }}
+                        onClick={() => setView("custody")}
+                      >
+                        Full custody log
+                      </button>
                     </div>
                   </div>
                 </div>
               </>
             )}
 
-            {view === "evidence" && (
+            {view === "sources" && (
               <>
-                <h1 className="page-title">Evidence sources</h1>
+                <h1 className="page-title">Data sources</h1>
                 <p className="page-sub">
-                  Forensic images for this case. Hash is identity; path is location.
+                  Forensic disk images for this case. Analyze each source
+                  independently.
                 </p>
-                <div className="toolbar">
-                  <button type="button" className="btn btn-primary" onClick={() => setAddSrcOpen(true)}>
+                <div className="panel-actions">
+                  <button
+                    type="button"
+                    className="btn btn-primary"
+                    onClick={() => setAddSrcOpen(true)}
+                  >
                     Add data source
-                  </button>
-                  <button type="button" className="btn" disabled={busy} onClick={runIntegrity}>
-                    Verify integrity
                   </button>
                 </div>
                 <div className="panel">
-                  <div className="panel-body" style={{ padding: 0 }}>
+                  <div className="panel-body">
                     {dataSources.length === 0 ? (
-                      <div className="empty-state">No sources registered.</div>
+                      <div className="empty">None registered.</div>
                     ) : (
-                      <table className="data">
-                        <thead>
-                          <tr>
-                            <th>Label</th>
-                            <th>Path</th>
-                            <th>SHA-256</th>
-                            <th>Status</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {dataSources.map((ds) => (
-                            <tr key={ds.id}>
-                              <td>{ds.label || ds.original_filename}</td>
-                              <td className="mono">{ds.stored_path}</td>
-                              <td className="mono">{ds.sha256_hash?.slice(0, 24)}…</td>
-                              <td>
-                                <span className={`tag ${ds.is_consistent === false ? "err" : "ok"}`}>
-                                  {ds.is_consistent === false ? "Problem" : "OK"}
-                                </span>
-                              </td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
+                      dataSources.map((ds) => (
+                        <div key={ds.id} style={{ marginBottom: 14 }}>
+                          <strong>{ds.label || ds.original_filename}</strong>
+                          <div className="mono">{ds.stored_path}</div>
+                          <div className="mono" style={{ marginTop: 4 }}>
+                            {ds.sha256_hash
+                              ? `${ds.sha256_hash.slice(0, 32)}…`
+                              : ""}
+                          </div>
+                          <button
+                            type="button"
+                            className="btn btn-sm btn-primary"
+                            style={{ marginTop: 10 }}
+                            disabled={busy}
+                            onClick={() => startAnalysisFor(ds)}
+                          >
+                            Analyze
+                          </button>{" "}
+                          {analysisBySource[ds.id]?.status && (
+                            <span className="tag">
+                              {analysisBySource[ds.id].status}
+                            </span>
+                          )}
+                        </div>
+                      ))
                     )}
                   </div>
                 </div>
               </>
             )}
 
-            {view === "analysis" && (
+            {view === "findings" && (
               <>
-                <h1 className="page-title">Analyze evidence</h1>
+                <h1 className="page-title">Key findings</h1>
                 <p className="page-sub">
-                  Runs the Morpheus orchestrator against the primary registered data source.
+                  Documents of interest, suspicious files, emails, web history,
+                  and more — from the analysis presentation report.
                 </p>
-                <div className="toolbar">
-                  <button type="button" className="btn btn-primary" disabled={busy} onClick={startAnalysis}>
-                    Analyze evidence
-                  </button>
-                </div>
-                <div className="panel">
-                  <div className="panel-title">Sources to process</div>
-                  <div className="panel-body">
-                    {dataSources.length === 0 ? (
-                      <div className="empty-state">Add a data source first.</div>
-                    ) : (
-                      <table className="data">
-                        <thead>
-                          <tr>
-                            <th>Type</th>
-                            <th>Path</th>
-                            <th>Image</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {dataSources.map((ds) => (
-                            <tr key={ds.id}>
-                              <td>{ds.image_type || "image"}</td>
-                              <td className="mono">{ds.stored_path}</td>
-                              <td>{ds.original_filename}</td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    )}
-                    {jobStatus && (
-                      <p style={{ marginTop: 12 }}>
-                        Status: <strong>{jobStatus}</strong>
-                        {jobId && (
-                          <span className="mono"> · {jobId}</span>
-                        )}
-                      </p>
-                    )}
+                {!report ? (
+                  <div className="empty">
+                    Run <strong>Analyze</strong> on a data source first.
                   </div>
-                </div>
+                ) : (
+                  <FindingsReport
+                    report={report}
+                    busy={busy}
+                    onExtract={extractArtifact}
+                    onPreviewImage={previewImage}
+                    imagePreviewUrl={imagePreviewUrl}
+                    imagePreviewName={imagePreviewName}
+                  />
+                )}
               </>
             )}
 
@@ -808,43 +1005,87 @@ export default function App() {
               <>
                 <h1 className="page-title">Chain of custody</h1>
                 <p className="page-sub">
-                  Load the custody report from the API (same source as the integrity certificate).
+                  Actions recorded for this case (same source as the integrity
+                  certificate).
                 </p>
-                <CustodyPanel caseNumber={active?.case_number} token={token} />
+                <div className="panel">
+                  <div className="panel-body">
+                    {!(custody?.custody_timeline || []).length ? (
+                      <div className="empty">No events.</div>
+                    ) : (
+                      (custody.custody_timeline || []).map((e, i) => (
+                        <div key={i} className="finding">
+                          <span className="dot" />
+                          <div>
+                            <strong>
+                              {e.what} — {e.who}
+                            </strong>
+                            <small>{e.when}</small>
+                            {e.detail ? (
+                              <small style={{ display: "block" }}>
+                                {e.detail}
+                              </small>
+                            ) : null}
+                          </div>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </div>
               </>
             )}
 
             {view === "reports" && (
               <>
                 <h1 className="page-title">Reports</h1>
-                <p className="page-sub">Integrity certificate and analysis outputs.</p>
-                <div className="grid-2">
-                  <div className="panel">
-                    <div className="panel-title">Evidence integrity certificate</div>
-                    <div className="panel-body">
-                      <p style={{ color: "var(--text-secondary)", fontSize: 12 }}>
-                        PDF generated from current fingerprints and custody log.
-                      </p>
-                      <button
-                        type="button"
-                        className="btn btn-primary"
-                        disabled={busy}
-                        onClick={downloadCertificate}
-                      >
-                        Download PDF
-                      </button>
-                    </div>
+                <p className="page-sub">
+                  Integrity certificate for non-technical readers. Analysis
+                  detail is on Key findings.
+                </p>
+                <div className="panel">
+                  <div className="panel-title">Evidence integrity certificate</div>
+                  <div className="panel-body">
+                    <p style={{ color: "var(--text-2)", fontSize: 14 }}>
+                      PDF with fingerprints, verification status, and custody
+                      timeline.
+                    </p>
+                    <button
+                      type="button"
+                      className="btn btn-primary"
+                      disabled={busy}
+                      onClick={downloadCertificate}
+                    >
+                      Download certificate PDF
+                    </button>
                   </div>
-                  <div className="panel">
-                    <div className="panel-title">Analysis export</div>
-                    <div className="panel-body">
-                      {analysis?.manifest_path ? (
-                        <p className="mono" style={{ fontSize: 11 }}>
-                          {analysis.manifest_path}
-                        </p>
-                      ) : (
-                        <div className="empty-state">Complete an analysis job to attach exports.</div>
-                      )}
+                </div>
+              </>
+            )}
+
+            {view === "about" && (
+              <>
+                <h1 className="page-title">About &amp; roadmap</h1>
+                <div className="panel">
+                  <div className="panel-body">
+                    <div className="note-card" style={{ marginTop: 0 }}>
+                      <h4>Disk images</h4>
+                      <p style={{ margin: 0 }}>
+                        Analysis targets forensic images on the Morpheus host.
+                        Paste the full path when registering a data source.
+                      </p>
+                    </div>
+                    <div className="note-card">
+                      <h4>Evidence collection</h4>
+                      <p style={{ margin: 0 }}>
+                        Non-image case files — coming soon. Integrity already
+                        applies to disk images you register.
+                      </p>
+                    </div>
+                    <div className="note-card">
+                      <h4>Mobile</h4>
+                      <p style={{ margin: 0 }}>
+                        Android and iOS acquisition and analysis — coming soon.
+                      </p>
                     </div>
                   </div>
                 </div>
@@ -857,129 +1098,109 @@ export default function App() {
       {addSrcOpen && (
         <Modal title="Add data source" onClose={() => setAddSrcOpen(false)}>
           <form onSubmit={addDataSource}>
-            <label>Absolute path to forensic image</label>
-            <input
-              required
-              placeholder="/path/to/evidence.E01"
-              value={srcForm.file_path}
-              onChange={(e) => setSrcForm({ ...srcForm, file_path: e.target.value })}
-            />
-            <label>Label (optional)</label>
+            <div className="note-card" style={{ marginTop: 0 }}>
+              <h4>How to add a disk image</h4>
+              <p style={{ margin: 0 }}>
+                Copy the image into a Morpheus Evidence folder on this
+                workstation when possible. In the desktop app use{" "}
+                <strong>Browse…</strong> to pick the file (full path is filled
+                automatically), or paste the path below.
+              </p>
+            </div>
+            <label>Full path on Morpheus host</label>
+            <div style={{ display: "flex", gap: 8, alignItems: "stretch" }}>
+              <input
+                required
+                placeholder="/path/to/image.E01"
+                value={srcForm.file_path}
+                onChange={(e) =>
+                  setSrcForm({ ...srcForm, file_path: e.target.value })
+                }
+                style={{ flex: 1 }}
+              />
+              {typeof window !== "undefined" && window.electronAPI?.openFile && (
+                <button
+                  type="button"
+                  className="btn btn-sm"
+                  onClick={async () => {
+                    const selected = await window.electronAPI.openFile({
+                      title: "Select evidence disk image",
+                    });
+                    if (!selected) return;
+                    const filePath = Array.isArray(selected)
+                      ? selected[0]
+                      : selected;
+                    const base =
+                      String(filePath).split(/[/\\]/).pop() || "";
+                    setSrcForm((s) => ({
+                      ...s,
+                      file_path: filePath,
+                      label: s.label || base,
+                      fileName: base,
+                    }));
+                  }}
+                >
+                  Browse…
+                </button>
+              )}
+            </div>
+            <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
+              <button
+                type="button"
+                className="btn btn-sm"
+                onClick={() =>
+                  setSrcForm((s) => ({
+                    ...s,
+                    file_path: DEMO_PATH,
+                    label: s.label || "2020JimmyWilson.E01",
+                  }))
+                }
+              >
+                Fill demo path
+              </button>
+            </div>
+            <label>Label</label>
             <input
               value={srcForm.label}
-              onChange={(e) => setSrcForm({ ...srcForm, label: e.target.value })}
+              onChange={(e) =>
+                setSrcForm({ ...srcForm, label: e.target.value })
+              }
             />
             <label>Collected by</label>
             <input
               value={srcForm.collected_by || user}
-              onChange={(e) => setSrcForm({ ...srcForm, collected_by: e.target.value })}
+              onChange={(e) =>
+                setSrcForm({ ...srcForm, collected_by: e.target.value })
+              }
             />
+            {hashing && (
+              <ProgressBar
+                value={null}
+                label="Hashing…"
+                sub={`Elapsed ${hashElapsed}s`}
+              />
+            )}
             {error && <p className="err-text">{error}</p>}
             <footer>
-              <button type="button" className="btn" onClick={() => setAddSrcOpen(false)}>
+              <button
+                type="button"
+                className="btn"
+                onClick={() => setAddSrcOpen(false)}
+              >
                 Cancel
               </button>
-              <button type="submit" className="btn btn-primary" disabled={busy}>
-                Register
+              <button
+                type="submit"
+                className="btn btn-primary"
+                disabled={busy}
+              >
+                {hashing ? "Hashing…" : "Register"}
               </button>
             </footer>
           </form>
         </Modal>
       )}
       {toast && <Toast {...toast} />}
-    </div>
-  );
-}
-
-function TopBar({ user, caseLabel, onLogout, onCases }) {
-  return (
-    <header className="topbar">
-      <span className="topbar-brand">MORPHEUS</span>
-      {caseLabel && (
-        <span className="topbar-case">
-          Case <strong>{caseLabel}</strong>
-        </span>
-      )}
-      <div className="topbar-actions">
-        {onCases && (
-          <button type="button" className="btn btn-ghost" onClick={onCases}>
-            Cases
-          </button>
-        )}
-        <span className="topbar-user">{user}</span>
-        <button type="button" className="btn btn-ghost" onClick={onLogout}>
-          Sign out
-        </button>
-      </div>
-    </header>
-  );
-}
-
-function Modal({ title, children, onClose }) {
-  return (
-    <div className="modal-back" role="presentation" onClick={onClose}>
-      <div className="modal" role="dialog" onClick={(e) => e.stopPropagation()}>
-        <header>
-          {title}
-          <button
-            type="button"
-            className="btn-link"
-            style={{ float: "right" }}
-            onClick={onClose}
-          >
-            Close
-          </button>
-        </header>
-        <div className="body">{children}</div>
-      </div>
-    </div>
-  );
-}
-
-function Toast({ title, detail }) {
-  return (
-    <div className="toast">
-      <strong>{title}</strong>
-      {detail && <span>{detail}</span>}
-    </div>
-  );
-}
-
-function CustodyPanel({ caseNumber, token }) {
-  const [data, setData] = useState(null);
-  const [err, setErr] = useState("");
-
-  useEffect(() => {
-    if (!caseNumber || !token) return;
-    api(`/data-sources/${caseNumber}/custody-report`, { token })
-      .then(setData)
-      .catch((e) => setErr(e.message));
-  }, [caseNumber, token]);
-
-  if (err) return <div className="empty-state">{err}</div>;
-  if (!data) return <div className="empty-state">Loading custody…</div>;
-
-  const timeline = data.custody_timeline || [];
-  return (
-    <div className="panel">
-      <div className="panel-title">
-        Custody — {data.overall_status || "Status"} · {data.case_number}
-      </div>
-      <div className="panel-body">
-        <p style={{ color: "var(--text-secondary)", fontSize: 12 }}>{data.overall_summary}</p>
-        <ul className="activity" style={{ margin: 0, padding: 0 }}>
-          {timeline.length === 0 && <li>No custody events yet.</li>}
-          {timeline.map((e, i) => (
-            <li key={i}>
-              <strong>
-                {e.what} — {e.who}
-              </strong>
-              <time>{e.when}</time>
-              {e.detail && <div style={{ color: "var(--muted)" }}>{e.detail}</div>}
-            </li>
-          ))}
-        </ul>
-      </div>
     </div>
   );
 }
