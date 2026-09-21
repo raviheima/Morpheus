@@ -439,13 +439,69 @@ class CertificateService:
 
         pdf = FPDF()
         pdf.set_auto_page_break(auto=True, margin=15)
+        pdf.set_margins(15, 18, 15)
         pdf.add_page()
 
-        # Title
-        pdf.set_font("Helvetica", "B", 16)
-        pdf.cell(0, 10, safe("Morpheus Case Report"), ln=True)
+        NAVY = (22, 48, 78)
+        BLUE = (44, 104, 171)
+        LIGHT_BLUE = (232, 241, 250)
+        PALE_BLUE = (246, 249, 253)
+        BORDER = (205, 216, 230)
+        TEXT = (38, 48, 62)
+        MUTED = (92, 105, 121)
+        GREEN = (37, 122, 78)
+        PALE_GREEN = (232, 246, 237)
+        RED = (170, 52, 52)
+        PALE_RED = (252, 235, 235)
+        AMBER = (160, 103, 20)
+        PALE_AMBER = (255, 246, 222)
+
+        def section_heading(number: str, title: str):
+            pdf.ln(3)
+            pdf.set_fill_color(*NAVY)
+            pdf.set_text_color(255, 255, 255)
+            pdf.set_font("Helvetica", "B", 11)
+            pdf.cell(0, 8, safe(f"  {number}  {title}"), fill=True, ln=True)
+            pdf.set_text_color(*TEXT)
+            pdf.ln(2)
+
+        def category_heading(title: str, count: int):
+            pdf.set_fill_color(*LIGHT_BLUE)
+            pdf.set_text_color(*NAVY)
+            pdf.set_font("Helvetica", "B", 10)
+            pdf.cell(0, 7, safe(f"  {title}  ({count:,})"), fill=True, ln=True)
+            pdf.set_text_color(*TEXT)
+
+        def status_badge(label: str, good: bool):
+            fill = PALE_GREEN if good else PALE_RED
+            color = GREEN if good else RED
+            pdf.set_fill_color(*fill)
+            pdf.set_text_color(*color)
+            pdf.set_font("Helvetica", "B", 10)
+            pdf.cell(42, 7, safe(label), fill=True, ln=True, align="C")
+            pdf.set_text_color(*TEXT)
+
+        # Branded cover/header
+        pdf.set_fill_color(*NAVY)
+        pdf.rect(0, 0, 210, 42, style="F")
+        pdf.set_xy(15, 12)
+        pdf.set_text_color(255, 255, 255)
+        pdf.set_font("Helvetica", "B", 21)
+        pdf.cell(0, 10, safe("MORPHEUS"), ln=True)
         pdf.set_font("Helvetica", "", 11)
-        pdf.ln(2)
+        pdf.cell(0, 7, safe("DIGITAL FORENSIC CASE REPORT"), ln=True)
+        pdf.set_text_color(*TEXT)
+        pdf.set_y(52)
+        pdf.set_font("Helvetica", "B", 16)
+        pdf.cell(0, 10, safe("Investigation Report"), ln=True)
+        pdf.set_font("Helvetica", "", 11)
+        pdf.set_text_color(*MUTED)
+        pdf.multi_cell(0, 6, safe(
+            "Executive findings, evidence integrity, categorized artifacts, and "
+            "chain-of-custody history."
+        ))
+        pdf.set_text_color(*TEXT)
+        pdf.ln(5)
         pdf.multi_cell(
             0,
             6,
@@ -457,9 +513,13 @@ class CertificateService:
         pdf.ln(4)
 
         # Case details
-        pdf.set_font("Helvetica", "B", 12)
-        pdf.cell(0, 8, safe("1. Case details"), ln=True)
-        pdf.set_font("Helvetica", "", 11)
+        section_heading("01", "Case details")
+        pdf.set_fill_color(*PALE_BLUE)
+        pdf.set_draw_color(*BORDER)
+        pdf.rect(pdf.l_margin, pdf.get_y(), pdf.w - pdf.l_margin - pdf.r_margin, 34, style="DF")
+        pdf.set_xy(pdf.l_margin + 5, pdf.get_y() + 4)
+        pdf.set_font("Helvetica", "", 10)
+        pdf.set_text_color(*TEXT)
         pdf.cell(0, 6, safe(f"Case number: {data['case_number']}"), ln=True)
         pdf.cell(0, 6, safe(f"Case name: {data['case_name']}"), ln=True)
         pdf.cell(0, 6, safe(f"Examiner: {data['examiner_name']}"), ln=True)
@@ -471,12 +531,15 @@ class CertificateService:
             safe(f"Generated: {CertificateService._fmt_dt(data['generated_at'])}"),
             ln=True,
         )
-        pdf.ln(3)
+        pdf.ln(8)
 
         # Integrity
-        pdf.set_font("Helvetica", "B", 12)
-        pdf.cell(0, 8, safe(f"2. Integrity: {data['overall_status']}"), ln=True)
-        pdf.set_font("Helvetica", "", 11)
+        section_heading("02", "Evidence integrity")
+        status_ok = data["overall_status"] == "UNCHANGED"
+        status_badge(data["overall_status"], status_ok)
+        pdf.ln(2)
+        pdf.set_font("Helvetica", "", 10)
+        pdf.set_text_color(*TEXT)
         pdf.multi_cell(0, 6, safe(data["overall_summary"]))
         pdf.ln(2)
         pdf.set_font("Helvetica", "", 10)
@@ -491,14 +554,15 @@ class CertificateService:
             if ds.get("warning"):
                 block += f"\n  Note: {ds['warning']}"
             pdf.set_x(pdf.l_margin)
-            pdf.multi_cell(0, 5, safe(block))
-            pdf.ln(1)
+            pdf.set_fill_color(*(PALE_GREEN if ds["consistent"] else PALE_RED))
+            pdf.set_draw_color(*BORDER)
+            pdf.multi_cell(0, 5, safe(block), fill=True)
+            pdf.ln(2)
 
-        # Analysis findings
-        pdf.ln(2)
-        pdf.set_font("Helvetica", "B", 12)
-        pdf.cell(0, 8, safe("3. Key analysis findings"), ln=True)
+        # Executive summary and categorized findings
+        section_heading("03", "Executive summary")
         pdf.set_font("Helvetica", "", 10)
+        pdf.set_text_color(*TEXT)
 
         if not presentation:
             pdf.multi_cell(
@@ -511,74 +575,82 @@ class CertificateService:
             )
         else:
             cs = presentation.get("case_summary") or {}
-            lines = [
-                f"Files scanned: {cs.get('total_files_scanned', '—')}",
-                f"Deleted recovered: {cs.get('total_deleted_recovered', cs.get('total_deleted_found', '—'))}",
-                f"Emails: {cs.get('total_emails_parsed', '—')}",
-                f"Browser history entries: {cs.get('total_browser_history_entries', '—')}",
-                f"Volumes: {cs.get('total_volumes_scanned', '—')}",
+            categories = [
+                ("Documents of interest", "documents_of_interest", "total_documents_of_interest"),
+                ("Suspicious files", "suspicious_files", "total_suspicious"),
+                ("Deleted / recovered files", "deleted_files", "total_deleted_recovered"),
+                ("Email communications", "sample_emails", "total_emails_parsed"),
+                ("Web history", "sample_web_history", "total_browser_history_entries"),
+                ("Images", "images", "total_images"),
+                ("Nested virtual disks", "nested_virtual_disks", "nested_vhds"),
             ]
-            for line in lines:
+            summary_lines = [
+                f"Analysis status: {cs.get('status', 'unknown')}",
+                f"Files scanned: {cs.get('total_files_scanned', 0):,}",
+                f"Volumes scanned: {cs.get('total_volumes_scanned', '—')}",
+                f"Processing errors: {cs.get('processing_errors', len(presentation.get('errors') or []))}",
+            ]
+            for label, key, total_key in categories:
+                items = presentation.get(key) or []
+                total = cs.get(total_key)
+                if total is None:
+                    total = len(items)
+                summary_lines.append(f"{label}: {total:,}")
+            for line in summary_lines:
                 pdf.cell(0, 5, safe(f"- {line}"), ln=True)
 
-            # Documents of interest (capped)
-            docs = presentation.get("documents_of_interest") or presentation.get(
-                "documents"
-            ) or []
-            if isinstance(docs, list) and docs:
-                pdf.ln(2)
-                pdf.set_font("Helvetica", "B", 11)
-                pdf.cell(0, 6, safe("Documents of interest (sample)"), ln=True)
-                pdf.set_font("Helvetica", "", 9)
-                for doc in docs[:12]:
-                    if isinstance(doc, dict):
-                        name = doc.get("name") or doc.get("path") or str(doc)
-                        p = doc.get("path") or ""
-                        pdf.set_x(pdf.l_margin)
-                        pdf.multi_cell(0, 4, safe(f"- {name}" + (f"  [{p}]" if p else "")))
-                    else:
-                        pdf.set_x(pdf.l_margin)
-                        pdf.multi_cell(0, 4, safe(f"- {doc}"))
+            section_heading("04", "Categorized findings")
+            pdf.set_font("Helvetica", "", 9)
 
-            emails = presentation.get("emails") or []
-            if isinstance(emails, list) and emails:
-                pdf.ln(2)
-                pdf.set_font("Helvetica", "B", 11)
-                pdf.cell(0, 6, safe("Email artifacts (sample)"), ln=True)
+            for label, key, total_key in categories:
+                items = presentation.get(key) or []
+                total = cs.get(total_key)
+                if total is None:
+                    total = len(items)
+                category_heading(label, total)
                 pdf.set_font("Helvetica", "", 9)
-                for em in emails[:8]:
-                    if not isinstance(em, dict):
+                if not items:
+                    pdf.cell(0, 4, safe("No items listed."), ln=True)
+                    continue
+                for item in items:
+                    if not isinstance(item, dict):
+                        pdf.set_x(pdf.l_margin)
+                        pdf.multi_cell(0, 4, safe(f"- {item}"))
                         continue
-                    subj = em.get("subject") or "(no subject)"
-                    frm = em.get("from") or em.get("sender") or "?"
-                    pdf.set_x(pdf.l_margin)
-                    pdf.multi_cell(0, 4, safe(f"- {subj}  (from {frm})"))
-
-            suspicious = presentation.get("suspicious") or presentation.get(
-                "suspicious_items"
-            ) or []
-            if isinstance(suspicious, list) and suspicious:
-                pdf.ln(2)
-                pdf.set_font("Helvetica", "B", 11)
-                pdf.cell(0, 6, safe("Suspicious / notable items (sample)"), ln=True)
-                pdf.set_font("Helvetica", "", 9)
-                for s in suspicious[:10]:
-                    if isinstance(s, dict):
-                        pdf.set_x(pdf.l_margin)
-                        pdf.multi_cell(
-                            0,
-                            4,
-                            safe(f"- {s.get('name') or s.get('path') or s}"),
+                    name = item.get("name") or item.get("subject") or item.get("url") or item.get("path") or "Unnamed artifact"
+                    details = []
+                    path = item.get("path") or item.get("source_path")
+                    if path and path != name:
+                        details.append(f"path: {path}")
+                    if item.get("artifact_id"):
+                        details.append(f"ID: {item['artifact_id']}")
+                    if item.get("deleted"):
+                        details.append("deleted/recovered")
+                    rules = item.get("detection_rules") or item.get("reasons") or []
+                    if rules:
+                        rule_text = ", ".join(
+                            r.get("name", r.get("id", str(r))) if isinstance(r, dict) else str(r)
+                            for r in rules
                         )
-                    else:
-                        pdf.set_x(pdf.l_margin)
-                        pdf.multi_cell(0, 4, safe(f"- {s}"))
+                        details.append(f"rules: {rule_text}")
+                    suffix = f" ({'; '.join(details)})" if details else ""
+                    pdf.set_x(pdf.l_margin)
+                    pdf.multi_cell(0, 4, safe(f"- {name}{suffix}"))
+
+            errors = presentation.get("errors") or []
+            if errors:
+                pdf.set_font("Helvetica", "B", 10)
+                pdf.cell(0, 6, safe(f"Processing limitations ({len(errors)})"), ln=True)
+                pdf.set_font("Helvetica", "", 9)
+                for error in errors:
+                    pdf.set_x(pdf.l_margin)
+                    pdf.multi_cell(0, 4, safe(f"- {error}"))
 
         # Custody
         pdf.add_page()
-        pdf.set_font("Helvetica", "B", 12)
-        pdf.cell(0, 8, safe("4. Chain of custody"), ln=True)
+        section_heading("05", "Chain of custody")
         pdf.set_font("Helvetica", "", 10)
+        pdf.set_text_color(*TEXT)
         pdf.multi_cell(
             0,
             5,

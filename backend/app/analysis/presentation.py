@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import tempfile
 from pathlib import Path
@@ -28,6 +29,61 @@ def _uniq(items: list[dict], keys: tuple[str, ...]) -> list[dict]:
         seen.add(k)
         out.append(it)
     return out
+
+
+def _with_provenance(item: dict, artifact_type: str, report: dict) -> dict:
+    """Return a presentation-safe copy with reproducible artifact identity.
+
+    This does not claim to be a content hash. A content hash is included only
+    when an upstream analyzer or extraction step already supplied one.
+    """
+    result = dict(item)
+    source_path = item.get("source_path") or item.get("path") or item.get("url")
+    volume = item.get("volume") or item.get("source_volume") or "unknown"
+    identity = {
+        "report_id": report.get("report_id"),
+        "artifact_type": artifact_type,
+        "source_path": source_path,
+        "volume": volume,
+        "name": item.get("name"),
+        "message_id": item.get("message_id"),
+        "timestamp": item.get("last_accessed") or item.get("visit_time") or item.get("date"),
+    }
+    identity_json = json.dumps(identity, sort_keys=True, default=str).encode("utf-8")
+    result["artifact_id"] = "A-" + hashlib.sha256(identity_json).hexdigest()[:16]
+    result["provenance"] = {
+        "evidence_target": report.get("target"),
+        "source_path": source_path,
+        "volume": volume,
+        "artifact_type": artifact_type,
+        "deleted": bool(item.get("deleted", False)),
+        "integrity": {
+            "sha256": item.get("sha256"),
+            "md5": item.get("md5"),
+            "source_hash": item.get("hash"),
+            "hash_available": bool(item.get("sha256") or item.get("md5") or item.get("hash")),
+        },
+    }
+    return result
+
+
+def _annotate_presentation(data: dict, report: dict) -> dict:
+    categories = {
+        "documents_of_interest": "document_of_interest",
+        "suspicious_files": "suspicious_file",
+        "deleted_files": "deleted_file",
+        "sample_emails": "parsed_email",
+        "sample_web_history": "browser_history",
+        "images": "image",
+    }
+    enriched = dict(data)
+    for key, artifact_type in categories.items():
+        enriched[key] = [
+            _with_provenance(item, artifact_type, report)
+            for item in data.get(key) or []
+            if isinstance(item, dict)
+        ]
+    return enriched
 
 
 def build_presentation(report: dict) -> dict:
@@ -59,11 +115,11 @@ def build_presentation(report: dict) -> dict:
                 if len(enriched.get(key) or []) > len(data.get(key) or []):
                     data[key] = enriched[key]
             data.setdefault("nested_virtual_disks", report.get("nested_virtual_disks") or [])
-            return data
+            return _annotate_presentation(data, report)
     except Exception:
         pass
 
-    return _from_volumes(report)
+    return _annotate_presentation(_from_volumes(report), report)
 
 
 def _from_volumes(report: dict) -> dict:
@@ -87,7 +143,7 @@ def _from_volumes(report: dict) -> dict:
         if isinstance(ea, dict):
             for em in _list(ea.get("parsed_emails")):
                 if isinstance(em, dict):
-                    emails.append(em)
+                    emails.append({**em, "source_volume": vol.get("description") or vol.get("volume_name") or "unknown"})
 
         # --- Browser history ---
         ba = vol.get("browser_analysis") or {}
@@ -102,6 +158,7 @@ def _from_volumes(report: dict) -> dict:
                         row = dict(entry)
                         if row.get("access_count") is None and row.get("visit_count") is not None:
                             row["access_count"] = row["visit_count"]
+                        row["source_volume"] = vol.get("description") or vol.get("volume_name") or "unknown"
                         history.append(row)
 
         # --- Text / documents of interest ---
@@ -119,28 +176,28 @@ def _from_volumes(report: dict) -> dict:
             ):
                 for doc in _list(ta.get(key)):
                     if isinstance(doc, dict):
-                        docs_interest.append(doc)
+                        docs_interest.append({**doc, "source_volume": vol.get("description") or vol.get("volume_name") or "unknown"})
 
         # --- scan_result inventory ---
         sr = vol.get("scan_result") or {}
         if isinstance(sr, dict):
             for s in _list(sr.get("suspicious_files")):
                 if isinstance(s, dict):
-                    suspicious.append(s)
+                    suspicious.append({**s, "source_volume": vol.get("description") or vol.get("volume_name") or "unknown"})
             for d in _list(sr.get("deleted_files")) + _list(sr.get("deleted")):
                 if isinstance(d, dict):
-                    deleted.append(d)
+                    deleted.append({**d, "source_volume": vol.get("description") or vol.get("volume_name") or "unknown"})
             for d in _list(sr.get("documents")) + _list(sr.get("other_interesting")):
                 if isinstance(d, dict):
                     # interest-ish docs may also appear here
                     if d.get("reasons") or "interest" in str(d.get("type", "")).lower():
-                        docs_interest.append(d)
+                        docs_interest.append({**d, "source_volume": vol.get("description") or vol.get("volume_name") or "unknown"})
             for im in _list(sr.get("images")):
                 if isinstance(im, dict):
-                    images.append(im)
+                    images.append({**im, "source_volume": vol.get("description") or vol.get("volume_name") or "unknown"})
             for em in _list(sr.get("emails")):
                 if isinstance(em, dict) and (em.get("from") or em.get("subject")):
-                    emails.append(em)
+                    emails.append({**em, "source_volume": vol.get("description") or vol.get("volume_name") or "unknown"})
 
     # Nested VHD suspicious / images
     for vhd in nested:
@@ -154,7 +211,7 @@ def _from_volumes(report: dict) -> dict:
                     suspicious.append({**s, "source": "nested_vhd"})
             for im in _list(scan.get("images")):
                 if isinstance(im, dict):
-                    images.append(im)
+                    images.append({**im, "source_volume": f"nested:{vhd.get('vhd_path') or vhd.get('path') or 'unknown'}"})
 
     # Tag recycle paths as deleted if not already
     for d in docs_interest:
@@ -170,6 +227,13 @@ def _from_volumes(report: dict) -> dict:
     images = _uniq(images, ("path", "name"))
 
     case_summary = {
+        "report_id": report.get("report_id"),
+        "status": report.get("status", "unknown"),
+        "analysis_started_at": report.get("analysis_started_at"),
+        "analysis_completed_at": report.get("analysis_completed_at"),
+        "analysis_duration_seconds": report.get("analysis_duration_seconds"),
+        "engine": report.get("engine") or {},
+        "processing_errors": len(report.get("errors") or []),
         "target": report.get("target") or ident.get("file_path"),
         "image_type": ident.get("image_type") or "Unknown",
         "is_operating_system": bool(ident.get("is_operating_system")),

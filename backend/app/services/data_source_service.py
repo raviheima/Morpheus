@@ -10,6 +10,22 @@ from app.hashing import calculate_hashes
 IMAGE_EXTENSIONS = {".e01", ".ex01", ".s01", ".vhd", ".vhdx", ".dd", ".raw", ".img", ".001"}
 
 
+class DuplicateDataSourceError(ValueError):
+    """Raised when a case already contains the same evidence fingerprint."""
+
+    def __init__(self, existing: DataSource):
+        self.existing_id = existing.id
+        self.existing_path = existing.stored_path
+        self.existing_filename = existing.original_filename
+        self.sha256 = existing.sha256_hash
+        super().__init__(
+            "Duplicate data source: this file has the same SHA-256 as "
+            f"data source #{existing.id} ({existing.original_filename}) at "
+            f"{existing.stored_path}. Use PATCH /data-sources/by-id/{existing.id}/path "
+            "if the evidence was moved, or register it in a different case."
+        )
+
+
 def detect_image_type(filename: str) -> str:
     ext = Path(filename).suffix.lower()
     mapping = {
@@ -56,6 +72,15 @@ class DataSourceService:
             case = db.query(Case).filter(Case.case_number == case_number).first()
             if not case:
                 raise ValueError(f"Case not found: {case_number}")
+
+            duplicate = (
+                db.query(DataSource)
+                .filter(DataSource.case_id == case.id)
+                .filter(DataSource.sha256_hash == hash_info["sha256"])
+                .first()
+            )
+            if duplicate:
+                raise DuplicateDataSourceError(duplicate)
 
             ds = DataSource(
                 case_id=case.id,

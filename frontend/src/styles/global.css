@@ -430,6 +430,13 @@ table.data tbody tr:hover {
 .finding:first-child {
   border-top: 0;
 }
+.integrity-finding > div {
+  grid-column: 1 / -1;
+  min-width: 0;
+}
+.integrity-finding .mono {
+  overflow-wrap: anywhere;
+}
 .dot {
   width: 9px;
   height: 9px;

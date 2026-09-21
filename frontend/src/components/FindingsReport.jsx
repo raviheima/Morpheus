@@ -69,6 +69,25 @@ export default function FindingsReport({
 
       <p className="page-sub mono">{s.target}</p>
       <p className="page-sub">
+        Report {s.report_id || "not assigned"} · Status: {s.status || "unknown"} · Completed: {s.analysis_completed_at || "unknown"} · Duration: {s.analysis_duration_seconds ?? "unknown"} seconds
+      </p>
+      {Number(s.processing_errors) > 0 && (
+        <div className="panel" style={{ borderColor: "var(--warning, #c98a00)", marginBottom: 12 }}>
+          <div className="panel-title">Processing limitations</div>
+          <div className="panel-body">
+            <strong>{s.processing_errors} processing error(s) were recorded.</strong>
+            <p className="page-sub" style={{ marginBottom: 0 }}>
+              Review the errors before treating this report as complete.
+            </p>
+            <ul style={{ marginBottom: 0 }}>
+              {(report.errors || []).map((item, index) => (
+                <li key={index}>{typeof item === "string" ? item : JSON.stringify(item)}</li>
+              ))}
+            </ul>
+          </div>
+        </div>
+      )}
+      <p className="page-sub">
         Image: {s.image_type}
         {s.is_operating_system ? " · OS" : ""} · {s.total_files_scanned} files ·{" "}
         {s.total_deleted_recovered} deleted · {s.total_emails_parsed} emails ·{" "}

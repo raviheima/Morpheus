@@ -4,35 +4,68 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 from fpdf import FPDF
 
+from app.analysis.report_rules import browser_rules, document_rules
 
-def format_report(report: Dict[str, Any], include_appendix: bool = False) -> str:
+
+def _report_items(items: list, report_mode: str, summary_limit: int) -> list:
+    """Return all items in full mode, or a bounded summary selection."""
+    if report_mode == "full":
+        return items
+    return items[:summary_limit]
+
+
+def _append_scope_notice(lines: list, label: str, total: int, report_mode: str, summary_limit: int) -> None:
+    if report_mode == "full" or total <= summary_limit:
+        return
+    lines.append(f"Showing {summary_limit} of {total} {label}. Use full report mode for all items.")
+
+
+def format_report(
+    report: Dict[str, Any],
+    include_appendix: bool = False,
+    report_mode: str = "summary",
+) -> str:
     """
     Formats the analysis report dictionary into a clean, investigator-friendly,
     structured text/markdown report.
+
+    ``summary`` is concise and explicitly labels limited sections.
+    ``full`` includes every available item in the report.
     """
+    if report_mode not in {"summary", "full"}:
+        raise ValueError("report_mode must be 'summary' or 'full'")
+
     lines = []
 
     # 1. Header
     target = report.get("target", "Unknown Target")
     ident = report.get("identification") or {}
     summary = report.get("summary") or {}
-    now_str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+    engine = report.get("engine") or {}
+    now_str = report.get("analysis_completed_at") or report.get("analysis_started_at") or datetime.now(timezone.utc).isoformat()
+    status = report.get("status", "unknown")
 
     lines.append("=" * 65)
     lines.append("MORPHEUS FORENSIC ANALYSIS REPORT")
     lines.append("=" * 65)
+    lines.append(f"Report ID             : {report.get('report_id', 'Not assigned')}")
     lines.append(f"Evidence Target       : {target}")
     lines.append(f"Image Type            : {ident.get('image_type', 'Unknown')}")
     lines.append(f"Partition Scheme      : {ident.get('partition_scheme', 'Unknown')}")
-    lines.append(f"Operating System      : {ident.get('is_operating_system', False)}")
-    lines.append(f"Report Generated      : {now_str}")
-    lines.append(f"Tool Version          : Morpheus Analysis Engine v1.0")
+    lines.append(f"Operating System      : {'Detected' if ident.get('is_operating_system') else 'Not detected'}")
+    lines.append(f"Analysis Completed    : {now_str}")
+    lines.append(f"Analysis Status       : {status}")
+    lines.append(f"Analysis Duration     : {report.get('analysis_duration_seconds', 'Unknown')} seconds")
+    lines.append(f"Report Mode           : {report_mode}")
+    lines.append(f"Tool Version          : {engine.get('name', 'Morpheus Analysis Engine')} v{engine.get('version', 'Unknown')}")
     lines.append("")
 
     # 2. Executive Summary
     lines.append("-" * 65)
     lines.append("EXECUTIVE SUMMARY (KEY FINDINGS)")
     lines.append("-" * 65)
+    if report.get("errors"):
+        lines.append(f"• Processing warnings/errors : {len(report['errors'])} (see Limitations)")
 
     scanned_vols = summary.get("total_volumes_scanned", 0)
     found_vols = summary.get("total_volumes_found", 0)
@@ -73,20 +106,25 @@ def format_report(report: Dict[str, Any], include_appendix: bool = False) -> str
         for ie in browser_analysis.get("internet_explorer", []):
             for entry in ie.get("entries", []):
                 url = entry.get("url", "")
-                if any(k in url.lower() for k in ["bing", "google", "yahoo", "search", "disappear", "id", "theft", "car", "printer", "harass"]):
-                    notable_browser.append(entry)
+                matched_rules = browser_rules(url)
+                if matched_rules:
+                    item = dict(entry)
+                    item["detection_rules"] = matched_rules
+                    notable_browser.append(item)
 
         # Documents & Text files
         for doc in scan.get("documents", []):
             p = doc.get("path", "")
             lower_p = p.lower()
             if lower_p.endswith(".txt"):
-                if "encoded" in lower_p or "bctextencoder" in lower_p:
-                    docs_encrypted.append(doc)
-                elif "recycle" in lower_p or "$r" in lower_p:
-                    docs_recycle_plain.append(doc)
-                elif "users" in lower_p:
-                    docs_user.append(doc)
+                matched_rules = document_rules(p)
+                rule_ids = {rule["id"] for rule in matched_rules}
+                if "document_bctextencoder" in rule_ids:
+                    docs_encrypted.append({**doc, "detection_rules": matched_rules})
+                elif "document_recycle_bin" in rule_ids:
+                    docs_recycle_plain.append({**doc, "detection_rules": matched_rules})
+                elif "document_user_path" in rule_ids:
+                    docs_user.append({**doc, "detection_rules": matched_rules})
 
     # 3. Documents of Interest
     lines.append("-" * 65)
@@ -95,24 +133,29 @@ def format_report(report: Dict[str, Any], include_appendix: bool = False) -> str
 
     if docs_encrypted:
         lines.append("\n[ENCRYPTED COMMUNICATIONS]")
-        for doc in docs_encrypted[:5]:
+        _append_scope_notice(lines, "encrypted documents", len(docs_encrypted), report_mode, 5)
+        for doc in _report_items(docs_encrypted, report_mode, 5):
             lines.append(f"  • Path   : {doc.get('path')}")
             lines.append(f"    Format : BCTextEncoder / Encrypted Text")
             lines.append(f"    Status : Encrypted (Ciphertext Header Detected)")
+            lines.append(f"    Rules  : {', '.join(rule['name'] for rule in doc.get('detection_rules', []))}")
             lines.append(f"    Size   : {doc.get('size', 0):,} bytes")
             lines.append("")
 
     if docs_recycle_plain:
         lines.append("[RECYCLE BIN — RECOVERED PLAIN TEXT]")
-        for doc in docs_recycle_plain[:5]:
+        _append_scope_notice(lines, "recovered plain-text documents", len(docs_recycle_plain), report_mode, 5)
+        for doc in _report_items(docs_recycle_plain, report_mode, 5):
             lines.append(f"  • Path   : {doc.get('path')}")
             lines.append(f"    Status : Deleted (Recovered from $RECYCLE.BIN)")
+            lines.append(f"    Rules  : {', '.join(rule['name'] for rule in doc.get('detection_rules', []))}")
             lines.append(f"    Size   : {doc.get('size', 0):,} bytes")
             lines.append("")
 
     if docs_user:
         lines.append("[USER DOCUMENTS]")
-        for doc in docs_user[:6]:
+        _append_scope_notice(lines, "user documents", len(docs_user), report_mode, 6)
+        for doc in _report_items(docs_user, report_mode, 6):
             lines.append(f"  • Path   : {doc.get('path')}")
             lines.append(f"    Size   : {doc.get('size', 0):,} bytes")
             lines.append("")
@@ -126,7 +169,8 @@ def format_report(report: Dict[str, Any], include_appendix: bool = False) -> str
 
     if notable_emails:
         lines.append("Sample Emails:")
-        for eml in notable_emails[:6]:
+        _append_scope_notice(lines, "emails", len(notable_emails), report_mode, 6)
+        for eml in _report_items(notable_emails, report_mode, 6):
             date_str = eml.get("date", "Unknown Date")
             sender = eml.get("from", "Unknown")
             recipient = eml.get("to", "Unknown")
@@ -152,7 +196,8 @@ def format_report(report: Dict[str, Any], include_appendix: bool = False) -> str
     if notable_browser:
         lines.append("Notable Web Searches & Visited Sites:")
         seen_urls = set()
-        for item in notable_browser[:12]:
+        _append_scope_notice(lines, "browser history entries", len(notable_browser), report_mode, 12)
+        for item in _report_items(notable_browser, report_mode, 12):
             url = item.get("url", "")
             if url in seen_urls:
                 continue
@@ -160,7 +205,9 @@ def format_report(report: Dict[str, Any], include_appendix: bool = False) -> str
             ts = item.get("last_accessed") or item.get("last_modified") or "no-timestamp"
             hits = item.get("access_count", 1)
             display_url = url if len(url) <= 90 else url[:87] + "..."
+            rule_names = ', '.join(rule['name'] for rule in item.get('detection_rules', []))
             lines.append(f"  [{ts}]  hits={hits:<3}  {display_url}")
+            lines.append(f"      Rules: {rule_names}")
         lines.append("")
 
     # 6. Nested Virtual Disks & Encryption
@@ -187,7 +234,19 @@ def format_report(report: Dict[str, Any], include_appendix: bool = False) -> str
             lines.append(f"  • {enc_item}")
         lines.append("")
 
-    # 7. Volume Inventory
+    # 7. Processing Limitations
+    lines.append("-" * 65)
+    lines.append("PROCESSING LIMITATIONS AND ERRORS")
+    lines.append("-" * 65)
+    errors = report.get("errors") or []
+    if errors:
+        for error in errors:
+            lines.append(f"• {error}")
+    else:
+        lines.append("No processing errors were recorded.")
+    lines.append("")
+
+    # 8. Volume Inventory
     lines.append("-" * 65)
     lines.append("VOLUME INVENTORY & SUMMARY COUNTS")
     lines.append("-" * 65)
@@ -204,25 +263,44 @@ def format_report(report: Dict[str, Any], include_appendix: bool = False) -> str
     return "\n".join(lines)
 
 
-def export_report_json(report: Dict[str, Any], output_path: str, presentation_only: bool = False):
+def export_report_json(
+    report: Dict[str, Any],
+    output_path: str,
+    presentation_only: bool = False,
+    report_mode: str = "summary",
+):
     """
     Exports the report to a JSON file.
     If presentation_only is True, exports a curated subset ideal for demos & pitch decks.
     """
+    if report_mode not in {"summary", "full"}:
+        raise ValueError("report_mode must be 'summary' or 'full'")
+
     path = Path(output_path)
     path.parent.mkdir(parents=True, exist_ok=True)
 
     if not presentation_only:
+        export_data = dict(report)
+        export_data["report_mode"] = report_mode
+        export_data["export_scope"] = "complete analysis report"
         with open(path, "w", encoding="utf-8") as f:
-            json.dump(report, f, indent=2, default=str)
+            json.dump(export_data, f, indent=2, default=str)
         return
-
     # Slim presentation JSON
     summary = report.get("summary", {})
     ident = report.get("identification", {})
 
     presentation_data = {
+        "report_mode": report_mode,
+        "export_scope": "presentation summary",
         "case_summary": {
+            "report_id": report.get("report_id"),
+            "status": report.get("status"),
+            "analysis_started_at": report.get("analysis_started_at"),
+            "analysis_completed_at": report.get("analysis_completed_at"),
+            "analysis_duration_seconds": report.get("analysis_duration_seconds"),
+            "engine": report.get("engine"),
+            "processing_errors": len(report.get("errors") or []),
             "target": report.get("target"),
             "image_type": ident.get("image_type"),
             "is_operating_system": ident.get("is_operating_system"),
@@ -242,8 +320,9 @@ def export_report_json(report: Dict[str, Any], output_path: str, presentation_on
         scan = vol.get("scan_result") or {}
         for doc in scan.get("documents", []):
             p = doc.get("path", "").lower()
-            if "encoded" in p or "bctextencoder" in p or "recycle" in p or "new price" in p:
-                presentation_data["documents_of_interest"].append(doc)
+            matched_rules = document_rules(p)
+            if matched_rules:
+                presentation_data["documents_of_interest"].append({**doc, "detection_rules": matched_rules})
 
         email_analysis = vol.get("email_analysis") or {}
         for eml in email_analysis.get("parsed_emails", [])[:5]:
@@ -252,31 +331,38 @@ def export_report_json(report: Dict[str, Any], output_path: str, presentation_on
         browser_analysis = vol.get("browser_analysis") or {}
         for ie in browser_analysis.get("internet_explorer", []):
             for entry in ie.get("entries", []):
-                url = entry.get("url", "")
-                if any(k in url.lower() for k in ["bing", "google", "disappear", "id", "theft", "car", "printer"]):
-                    presentation_data["sample_web_history"].append(entry)
+                matched_rules = browser_rules(entry.get("url", ""))
+                if matched_rules:
+                    presentation_data["sample_web_history"].append({**entry, "detection_rules": matched_rules})
 
     with open(path, "w", encoding="utf-8") as f:
         json.dump(presentation_data, f, indent=2, default=str)
 
 
-def export_report_markdown(report: Dict[str, Any], output_path: str) -> str:
+def export_report_markdown(
+    report: Dict[str, Any], output_path: str, report_mode: str = "summary"
+) -> str:
     """
     Exports the forensic report as a GitHub-Flavored Markdown (.md) file.
     """
     path = Path(output_path)
     path.parent.mkdir(parents=True, exist_ok=True)
 
-    text_report = format_report(report, include_appendix=False)
+    text_report = format_report(report, include_appendix=False, report_mode=report_mode)
     with open(path, "w", encoding="utf-8") as f:
         f.write(text_report + "\n")
     return str(path)
 
 
-def export_report_pdf(report: Dict[str, Any], output_path: str) -> str:
+def export_report_pdf(
+    report: Dict[str, Any], output_path: str, report_mode: str = "summary"
+) -> str:
     """
     Generates a professional, investigator-ready PDF report document.
     """
+    if report_mode not in {"summary", "full"}:
+        raise ValueError("report_mode must be 'summary' or 'full'")
+
     path = Path(output_path)
     path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -315,15 +401,20 @@ def export_report_pdf(report: Dict[str, Any], output_path: str) -> str:
     target = report.get("target", "Unknown Target")
     ident = report.get("identification") or {}
     summary = report.get("summary") or {}
-    now_str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+    engine = report.get("engine") or {}
+    analysis_timestamp = report.get("analysis_completed_at") or report.get("analysis_started_at") or datetime.now(timezone.utc).isoformat()
 
     meta_items = [
+        ("Report ID", report.get("report_id", "Not assigned")),
         ("Evidence Target", target),
         ("Image Format", ident.get("image_type", "Unknown")),
         ("Partition Scheme", ident.get("partition_scheme", "Unknown")),
-        ("Operating System", "True" if ident.get("is_operating_system") else "False"),
-        ("Analysis Timestamp", now_str),
-        ("Engine Version", "Morpheus Analysis Engine v1.0"),
+        ("Operating System", "Detected" if ident.get("is_operating_system") else "Not detected"),
+        ("Analysis Completed", analysis_timestamp),
+        ("Analysis Status", report.get("status", "Unknown")),
+        ("Analysis Duration", f"{report.get('analysis_duration_seconds', 'Unknown')} seconds"),
+        ("Report Mode", report_mode),
+        ("Engine Version", f"{engine.get('name', 'Morpheus Analysis Engine')} v{engine.get('version', 'Unknown')}"),
     ]
 
     for label, val in meta_items:
@@ -376,16 +467,18 @@ def export_report_pdf(report: Dict[str, Any], output_path: str) -> str:
         scan = vol.get("scan_result") or {}
         for doc in scan.get("documents", []):
             p = doc.get("path", "")
-            lower_p = p.lower()
-            if "encoded" in lower_p or "bctextencoder" in lower_p or "recycle" in lower_p:
+            matched_rules = document_rules(p)
+            if matched_rules:
                 docs_found = True
                 pdf.set_x(pdf.l_margin)
                 pdf.set_font('Helvetica', 'B', 8)
-                pdf.cell(0, 4, f"Path: {p}", new_x="LMARGIN", new_y="NEXT")
+                pdf.multi_cell(0, 4, f"Path: {p}")
                 pdf.set_font('Helvetica', '', 8)
                 size_str = f"Size: {doc.get('size', 0):,} bytes"
                 del_str = " | Deleted: True" if doc.get("deleted") else ""
+                rule_names = ', '.join(rule['name'] for rule in matched_rules)
                 pdf.cell(0, 4, f"Status: {size_str}{del_str}", new_x="LMARGIN", new_y="NEXT")
+                pdf.multi_cell(0, 4, f"Rules: {rule_names}")
                 pdf.ln(1)
 
     if not docs_found:
@@ -409,7 +502,10 @@ def export_report_pdf(report: Dict[str, Any], output_path: str) -> str:
         pdf.cell(50, 5, "To", border=1)
         pdf.cell(55, 5, "Subject", border=1, new_x="LMARGIN", new_y="NEXT")
         pdf.set_font('Helvetica', '', 8)
-        for eml in emails_list[:8]:
+        if report_mode == "summary" and len(emails_list) > 8:
+            pdf.set_x(pdf.l_margin)
+            pdf.multi_cell(0, 5, f"Showing 8 of {len(emails_list)} emails. Use full report mode for all items.")
+        for eml in _report_items(emails_list, report_mode, 8):
             d = str(eml.get("date", ""))[:18]
             f_sender = str(eml.get("from", ""))[:25]
             t_recip = str(eml.get("to", ""))[:25]
@@ -434,8 +530,9 @@ def export_report_pdf(report: Dict[str, Any], output_path: str) -> str:
         for ie in browser_analysis.get("internet_explorer", []):
             for entry in ie.get("entries", []):
                 url = entry.get("url", "")
-                if any(k in url.lower() for k in ["bing", "google", "disappear", "id", "theft", "car", "printer"]):
-                    history_entries.append(entry)
+                matched_rules = browser_rules(url)
+                if matched_rules:
+                    history_entries.append({**entry, "detection_rules": matched_rules})
 
     if history_entries:
         pdf.set_x(pdf.l_margin)
@@ -445,7 +542,10 @@ def export_report_pdf(report: Dict[str, Any], output_path: str) -> str:
         pdf.cell(140, 5, "URL / Search Query", border=1, new_x="LMARGIN", new_y="NEXT")
         pdf.set_font('Helvetica', '', 8)
         seen_urls = set()
-        for h in history_entries[:10]:
+        if report_mode == "summary" and len(history_entries) > 10:
+            pdf.set_x(pdf.l_margin)
+            pdf.multi_cell(0, 5, f"Showing 10 of {len(history_entries)} browser history entries. Use full report mode for all items.")
+        for h in _report_items(history_entries, report_mode, 10):
             u = h.get("url", "")
             if u in seen_urls:
                 continue
@@ -453,6 +553,7 @@ def export_report_pdf(report: Dict[str, Any], output_path: str) -> str:
             ts = str(h.get("last_accessed") or h.get("last_modified") or "")[:18]
             hits = str(h.get("access_count", 1))
             display_u = u[:75]
+            rule_names = ', '.join(rule['name'] for rule in h.get('detection_rules', []))
             pdf.set_x(pdf.l_margin)
             pdf.cell(35, 5, ts, border=1)
             pdf.cell(15, 5, hits, border=1)
@@ -463,7 +564,20 @@ def export_report_pdf(report: Dict[str, Any], output_path: str) -> str:
         pdf.cell(0, 5, "No high-signal browser history entries recovered.", new_x="LMARGIN", new_y="NEXT")
     pdf.ln(4)
 
-    # 5. Volume Inventory
+    # 5. Processing Limitations
+    add_section_header("Processing Limitations and Errors")
+    pdf.set_font('Helvetica', '', 9)
+    errors = report.get("errors") or []
+    if errors:
+        for error in errors:
+            pdf.set_x(pdf.l_margin)
+            pdf.multi_cell(0, 5, f"- {error}")
+    else:
+        pdf.set_x(pdf.l_margin)
+        pdf.cell(0, 5, "No processing errors were recorded.", new_x="LMARGIN", new_y="NEXT")
+    pdf.ln(4)
+
+    # 6. Volume Inventory
     add_section_header("Volume & Artifact Counts Summary")
     pdf.set_font('Helvetica', '', 9)
     counts = [

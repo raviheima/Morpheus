@@ -22,7 +22,9 @@ export async function api(path, { token, method = "GET", body, form } = {}) {
           ? d
           : Array.isArray(d)
             ? d.map((x) => x.msg || JSON.stringify(x)).join(", ")
-            : res.statusText;
+            : d && typeof d === "object" && d.message
+              ? d.message
+              : res.statusText;
       throw new Error(msg || "Request failed");
     }
     return data;

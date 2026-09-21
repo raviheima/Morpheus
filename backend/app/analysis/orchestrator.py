@@ -1,7 +1,12 @@
 from typing import Any, Dict
+from datetime import datetime, timezone
 from pathlib import Path
+from uuid import uuid4
 import pyewf
 import pytsk3
+
+
+ENGINE_VERSION = "1.0.0"
 
 from app.analysis.identifier import DataSourceIdentifier, EWFImgInfo, VHDIImgInfo
 from app.analysis.analyzers.filesystem_scanner import FilesystemScanner
@@ -30,8 +35,18 @@ class AnalysisOrchestrator:
         if not path.exists():
             raise FileNotFoundError(f"File not found: {target}")
 
+        started_at = datetime.now(timezone.utc)
         report = {
+            "report_id": str(uuid4()),
             "target": str(path),
+            "engine": {
+                "name": "Morpheus Analysis Engine",
+                "version": ENGINE_VERSION,
+            },
+            "analysis_started_at": started_at.isoformat(),
+            "analysis_completed_at": None,
+            "analysis_duration_seconds": None,
+            "status": "running",
             "identification": None,
             "volume_scans": [],
             "nested_virtual_disks": [],
@@ -155,13 +170,28 @@ class AnalysisOrchestrator:
                         report["nested_virtual_disks"].append(vhd_result)
 
                 except Exception as e:
+                    message = f"Volume {vol.get('description', 'unknown')}: {e}"
                     vol_entry["note"] = f"Scan failed: {e}"
+                    report["errors"].append(message)
                     report["volume_scans"].append(vol_entry)
 
             # 4. Build summary
             report["summary"] = self._build_summary(report)
 
+            completed_at = datetime.now(timezone.utc)
+            report["analysis_completed_at"] = completed_at.isoformat()
+            report["analysis_duration_seconds"] = round(
+                (completed_at - started_at).total_seconds(), 3
+            )
+            report["status"] = "completed_with_errors" if report["errors"] else "completed"
+
         except Exception as e:
+            completed_at = datetime.now(timezone.utc)
+            report["analysis_completed_at"] = completed_at.isoformat()
+            report["analysis_duration_seconds"] = round(
+                (completed_at - started_at).total_seconds(), 3
+            )
+            report["status"] = "failed"
             report["errors"].append(str(e))
 
         return report

@@ -1033,6 +1033,7 @@ export default function App() {
             ["sources", "Data sources"],
             ["findings", "Key findings"],
             ["custody", "Chain of custody"],
+            ["extracted", "Extracted files"],
             ["reports", "Reports"],
             ["about", "About & roadmap"],
           ].map(([id, label]) => (
@@ -1141,7 +1142,7 @@ export default function App() {
                         return (
                           <div
                             key={`${it.kind}-${it.id}`}
-                            className="finding"
+                            className="finding integrity-finding"
                             style={{
                               borderLeft: compromised
                                 ? "3px solid #c44"
@@ -1349,27 +1350,6 @@ export default function App() {
                                   {e.what} — {e.who}
                                 </strong>
                                 <small>{e.when}</small>
-                              </div>
-                              <div className="panel">
-                                <div className="panel-title">Extracted files</div>
-                                <div className="panel-body extraction-log-scroll">
-                                  {!extractionLog.length ? (
-                                    <div className="empty">No files extracted from this case.</div>
-                                  ) : (
-                                    extractionLog.map((entry) => (
-                                      <div key={entry.id} className="finding">
-                                        <span className="dot" />
-                                        <div>
-                                          <strong className="mono">{entry.file_path}</strong>
-                                          <small>
-                                            {entry.actor} ·{" "}
-                                            {new Date(entry.timestamp).toLocaleString()}
-                                          </small>
-                                        </div>
-                                      </div>
-                                    ))
-                                  )}
-                                </div>
                               </div>
                             </div>
                           ))
@@ -1591,6 +1571,44 @@ export default function App() {
                       ))
                     )}
 
+                  </div>
+                </div>
+              </>
+            )}
+
+            {view === "extracted" && (
+              <>
+                <h1 className="page-title">Extracted files</h1>
+                <p className="page-sub">
+                  Files extracted from this case during artifact review. Each extraction is recorded in the chain of custody.
+                </p>
+                <div className="panel">
+                  <div className="panel-title">Extraction history · {extractionLog.length}</div>
+                  <div className="panel-body" style={{ padding: 0 }}>
+                    {!extractionLog.length ? (
+                      <div className="empty">No files have been extracted from this case.</div>
+                    ) : (
+                      <table className="data">
+                        <thead>
+                          <tr>
+                            <th>Extracted file</th>
+                            <th>Source path</th>
+                            <th>Extracted by</th>
+                            <th>Time</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {extractionLog.map((entry) => (
+                            <tr key={entry.id}>
+                              <td className="mono">{entry.file_path?.split(/[\\\\/]/).pop() || "Unknown file"}</td>
+                              <td className="mono" style={{ wordBreak: "break-all" }}>{entry.file_path || "—"}</td>
+                              <td>{entry.actor || "—"}</td>
+                              <td>{entry.timestamp ? new Date(entry.timestamp).toLocaleString() : "—"}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    )}
                   </div>
                 </div>
               </>

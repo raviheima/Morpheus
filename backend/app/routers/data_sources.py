@@ -10,7 +10,7 @@ from app.schemas import (
     DataSourcePathUpdate,
     IntegrityCheckResponse,
 )
-from app.services.data_source_service import DataSourceService
+from app.services.data_source_service import DataSourceService, DuplicateDataSourceError
 from app.services.integrity_service import IntegrityService
 from app.auth.security import require_roles, get_current_user
 from app.auth.models import User
@@ -41,6 +41,19 @@ def add_data_source(
         return ds
     except FileNotFoundError as e:
         raise HTTPException(404, str(e))
+    except DuplicateDataSourceError as e:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "message": str(e),
+                "duplicate": True,
+                "existing_data_source_id": e.existing_id,
+                "existing_path": e.existing_path,
+                "existing_filename": e.existing_filename,
+                "sha256": e.sha256,
+                "path_update_endpoint": f"/data-sources/by-id/{e.existing_id}/path",
+            },
+        )
     except ValueError as e:
         raise HTTPException(400, str(e))
 

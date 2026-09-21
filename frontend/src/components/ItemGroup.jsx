@@ -29,6 +29,12 @@ export default function ItemGroup({
               <div>
                 <strong>{d.name || d.path}</strong>
                 <small className="mono">{d.path}</small>
+                {d.provenance && (
+                  <small className="mono">
+                    {d.artifact_id || "No artifact ID"} · volume: {d.provenance.volume || "unknown"}
+                    {d.provenance.integrity?.hash_available ? " · hash available" : " · hash not available"}
+                  </small>
+                )}
                 {showReasons && (d.reasons || []).length > 0 && (
                   <small>{(d.reasons || []).join(", ")}</small>
                 )}
