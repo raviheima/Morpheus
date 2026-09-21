@@ -1,17 +1,39 @@
+# CLI and terminal presentation
+# Typer provides typed command-line interfaces and argument validation.
 typer[all]
+# Rich provides formatted terminal output, progress bars, and status displays.
 rich
+
+# API and persistence
+# SQLAlchemy provides ORM models, database sessions, and queries.
 sqlalchemy
+# FastAPI provides the HTTP API, routing, dependency injection, and OpenAPI docs.
 fastapi
+# Uvicorn runs the ASGI FastAPI application.
 uvicorn
+# Multipart parsing supports file/form uploads in FastAPI endpoints.
 python-multipart
+# Pydantic validates API request and response data models.
 pydantic
+
+# Digital forensics and evidence formats
+# pytsk3 provides The Sleuth Kit filesystem and forensic-image access.
 pytsk3
+# libewf-python reads Expert Witness Format images such as E01/Ex01.
 libewf-python
+# libvhdi-python reads VHD/VHDX virtual disk containers.
 libvhdi-python
+# libesedb-python supports ESE database artifacts such as browser databases.
 libesedb-python
+
+# Reporting and security
+# fpdf2 generates PDF case reports and integrity/custody certificates.
 fpdf2
+# python-jose provides JWT creation and verification for API authentication.
 python-jose[cryptography]
+# passlib provides password hashing, including bcrypt support.
 passlib[bcrypt]
-python-multipart
+# email-validator validates examiner and account email addresses.
 email-validator
+# python-dotenv loads local backend configuration from .env files.
 python-dotenv

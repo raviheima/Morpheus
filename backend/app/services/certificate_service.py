@@ -113,6 +113,7 @@ class CertificateService:
         return {
             "when": CertificateService._fmt_dt(log.timestamp),
             "who": log.actor or "system",
+            "action": log.action,
             "what": title,
             "detail": detail,
         }

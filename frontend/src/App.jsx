@@ -1341,6 +1341,7 @@ export default function App() {
                         <div className="empty">No custody events yet.</div>
                       ) : (
                         (custody.custody_timeline || [])
+                          .filter((e) => e.action !== "file_extracted")
                           .slice(0, 8)
                           .map((e, i) => (
                             <div key={i} className="finding">

@@ -2,16 +2,27 @@
 
 React (Vite) examiner workspace for Morpheus digital forensics.
 
-## Run
+## Run Morpheus (recommended)
+
+Run the Electron desktop workspace rather than the browser-only UI. Electron provides the native file picker needed to select evidence files and obtain usable host paths.
 
 ```bash
-cd morpheus-ui
 cp .env.example .env   # set VITE_API_BASE if needed
 npm install
+npm run electron:dev
+```
+
+The API defaults to `http://localhost:8000`. The Electron window starts the Vite development server and opens the examiner workspace automatically.
+
+## Optional browser-only development mode
+
+Use browser mode only for frontend development or troubleshooting. It is not the recommended way to operate Morpheus because browser file inputs cannot reliably provide the host filesystem path required by the backend.
+
+```bash
 npm run dev
 ```
 
-Open http://localhost:5173 — API default `http://localhost:8000`.
+Open http://localhost:5173. In browser mode, enter a path that is accessible to the backend host manually.
 
 ## Structure
 
