@@ -1,4 +1,4 @@
-# Morpheus
+# Morpheus Prototype 
 
 Morpheus is an integrity-first digital forensics investigation workspace for registering forensic images, analyzing disk contents, reviewing artifacts, tracking chain of custody, and producing investigator-friendly reports.
 
@@ -173,18 +173,7 @@ npm run electron:build
 
 The browser UI is available for frontend development and troubleshooting, but it is **not the recommended way to use Morpheus**. Browser file inputs cannot provide a reliable host filesystem path, so you must enter a path accessible to the backend manually.
 
-```bash
-cd frontend
-npm run dev
-```
 
-Open http://localhost:5173 only when you specifically need browser-mode development.
-
-To build the desktop package:
-
-```bash
-npm run electron:build
-```
 
 ## Default accounts
 
@@ -338,7 +327,7 @@ Do not place generated output inside the original evidence directory. Preserve g
 
 ## Limitations
 
-- This is an active development project, not a validated forensic suite.
+- This is a project prototype.
 - It does not replace examiner review, independent verification, or laboratory procedures.
 - The browser, email, text, and filesystem analyzers cover a limited set of artifact formats and parsers.
 - Some filesystem metadata and timestamps depend on what the underlying library exposes.
@@ -355,7 +344,7 @@ Do not place generated output inside the original evidence directory. Preserve g
 
 ## Development checks
 
-Frontend production build:
+Frontend  build:
 
 ```bash
 cd frontend
@@ -369,14 +358,4 @@ cd backend
 python -m compileall -q app
 ```
 
-For a production or courtroom workflow, add project-specific automated tests, independent hash verification, parser validation, access control review, and documented examiner procedures.
 
-## Security and forensic cautions
-
-- Work from verified forensic copies whenever possible.
-- Do not analyze the only copy of evidence.
-- Record acquisition details and preserve original hash values.
-- Restrict access to evidence paths and generated exports.
-- Review every automated finding before including it in a conclusion.
-- Preserve the complete custody log, report output, manifests, and processing errors together.
-- Replace development passwords and configure authenticated, encrypted deployment before handling sensitive cases.
