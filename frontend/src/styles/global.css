@@ -1,32 +1,32 @@
-/* Morpheus UI — Premium Modern Forensics Tool UI */
+/* Morpheus UI — readable lab chrome (AXIOM-like light) */
 :root {
-  --bg: #e7eaed;
-  --bg-sidebar: #dfe4e8;
-  --panel: #f7f8f9;
-  --text: #0f1729;
-  --text-2: #3d4f5f;
-  --muted: #6b7f8e;
-  --border: #d4dbe2;
-  --border-strong: #a8b8c6;
-  --accent: #252a31;
-  --accent-hover: #11151a;
-  --accent-soft: #e8ebee;
-  --accent-glow: rgba(37, 42, 49, 0.14);
-  --success: #0d7a4f;
-  --success-bg: #e8f8f0;
-  --warning: #b45309;
-  --warning-bg: #fef3cd;
-  --danger: #c0392b;
-  --danger-bg: #fde8e8;
-  --topbar: #111827;
-  --topbar-text: #f8fafc;
-  --radius: 0;
-  --font: "Inter", "Segoe UI", system-ui, sans-serif;
-  --mono: "JetBrains Mono", ui-monospace, Consolas, monospace;
-  --shadow: 0 1px 3px rgba(0, 0, 0, 0.06), 0 1px 2px rgba(0, 0, 0, 0.04);
-  --shadow-md: 0 4px 16px rgba(0, 0, 0, 0.08), 0 2px 6px rgba(0, 0, 0, 0.04);
-  --shadow-lg: 0 12px 40px rgba(0, 0, 0, 0.12);
-  --ease: 200ms cubic-bezier(0.4, 0, 0.2, 1);
+  --bg: #eef1f4;
+  --bg-sidebar: #e6eaee;
+  --panel: #ffffff;
+  --text: #142028;
+  --text-2: #3a4a56;
+  --muted: #5a6b78;
+  --border: #c5ced6;
+  --border-strong: #9aabb8;
+  --accent: #0a6e9c;
+  --accent-hover: #085a80;
+  --accent-soft: #d6ebf5;
+  --accent-glow: rgba(10, 110, 156, 0.15);
+  --success: #0b5c42;
+  --success-bg: #e5f4ee;
+  --warning: #7a5200;
+  --warning-bg: #fff5dc;
+  --danger: #9b2c28;
+  --danger-bg: #fdeceb;
+  --topbar: #2b3236;
+  --topbar-text: #f4f7f9;
+  --radius: 4px;
+  --font: "Source Sans 3", "Segoe UI", system-ui, sans-serif;
+  --mono: "Source Code Pro", ui-monospace, Consolas, monospace;
+  --shadow: 0 1px 3px rgba(20, 32, 40, 0.08);
+  --shadow-md: 0 8px 24px rgba(20, 32, 40, 0.12);
+  --shadow-lg: 0 12px 40px rgba(20, 32, 40, 0.14);
+  --ease: 160ms ease;
   --fs: 15px;
   --fs-sm: 13px;
   --fs-xs: 12px;
@@ -87,28 +87,25 @@ button:disabled {
   color: var(--accent);
   font-weight: 600;
   font-size: var(--fs-sm);
-  letter-spacing: 0.01em;
   box-shadow: var(--shadow);
-  transition: background var(--ease), border-color var(--ease), transform var(--ease), box-shadow var(--ease);
+  transition: background var(--ease), border-color var(--ease), transform var(--ease);
 }
 .btn:hover:not(:disabled) {
   border-color: var(--accent);
-  background: #f0f2f4;
+  background: #eef7fb;
   transform: translateY(-1px);
-  box-shadow: var(--shadow-md);
 }
 .btn:active:not(:disabled) {
   transform: translateY(0);
 }
 .btn-primary {
-  background: #252a31;
+  background: #1280b0;
   color: #fff;
-  border-color: #11151a;
+  border-color: var(--accent-hover);
 }
 .btn-primary:hover:not(:disabled) {
-  background: #11151a;
+  background: var(--accent-hover);
   color: #fff;
-  box-shadow: var(--shadow-md);
 }
 .btn-danger {
   color: var(--danger);
@@ -156,30 +153,28 @@ button:disabled {
   align-items: center;
   gap: 16px;
   padding: 0 16px;
-  background: #111827;
+  background: var(--topbar);
   color: var(--topbar-text);
-  border-bottom: 1px solid #1f2937;
-  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.3);
+  border-bottom: 3px solid var(--accent);
 }
 .topbar-brand {
-  font-size: 15px;
-  letter-spacing: 0.12em;
-  font-weight: 800;
-  color: #e8ecef;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  font-size: 14px;
 }
 .brand-icon {
   width: 28px;
   height: 28px;
   display: grid;
   place-items: center;
-  color: #c3c9cf;
+  color: #a0b0ba;
 }
 .topbar-case {
   font-size: var(--fs-sm);
-  color: #94a3b8;
+  color: #b9c5cc;
 }
 .topbar-case strong {
-  color: #e2e8f0;
+  color: #fff;
   font-weight: 600;
 }
 .topbar-actions {
@@ -190,26 +185,7 @@ button:disabled {
 }
 .topbar-user {
   font-size: var(--fs-sm);
-  color: #94a3b8;
-}
-.topbar-avatar {
-  width: 28px;
-  height: 28px;
-  border-radius: 50%;
-  background: #374151;
-  display: grid;
-  place-items: center;
-  font-size: 11px;
-  font-weight: 700;
-  color: #fff;
-  letter-spacing: 0;
-}
-.brand-icon {
-  width: 28px;
-  height: 28px;
-  display: grid;
-  place-items: center;
-  color: #c3c9cf;
+  color: #aeb8bf;
 }
 
 .shell {
@@ -250,15 +226,14 @@ button:disabled {
   transition: all var(--ease);
 }
 .nav-item:hover:not(:disabled) {
-  background: #dce3ea;
+  background: #d8e0e6;
   color: var(--text);
 }
 .nav-item.active {
   background: var(--accent-soft);
-  border-left: 3px solid var(--accent);
-  color: #20262d;
+  border-left-color: var(--accent);
+  color: #064968;
   font-weight: 600;
-  box-shadow: inset 0 0 0 1px rgba(37, 42, 49, 0.1);
 }
 .nav-item:disabled {
   opacity: 0.7;
@@ -312,8 +287,8 @@ button:disabled {
   border: 1px solid #9bbbd0;
   border-left: 4px solid var(--accent);
   border-radius: var(--radius);
-  background: #eaf5fa;
-  color: #16445a;
+  background: #e8f4fb;
+  color: #064968;
   font-size: var(--fs-sm);
 }
 
@@ -327,15 +302,13 @@ button:disabled {
 .panel-title {
   margin: 0;
   padding: 12px 16px;
-  padding-left: 13px;
-  font-size: 11.5px;
+  font-size: 12px;
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.05em;
   color: var(--text);
   border-bottom: 1px solid var(--border);
-  border-left: 3px solid var(--accent);
-  background: #f8fafc;
+  background: #f6f8fa;
 }
 .panel-body {
   padding: 16px;
@@ -368,15 +341,15 @@ button:disabled {
 }
 .banner.ok {
   border-left-color: var(--success);
-  background: #e8f8f0;
+  background: var(--success-bg);
 }
 .banner.warn {
   border-left-color: var(--warning);
-  background: #fef3cd;
+  background: var(--warning-bg);
 }
 .banner.err {
   border-left-color: var(--danger);
-  background: #fde8e8;
+  background: var(--danger-bg);
 }
 .banner strong {
   display: block;
@@ -469,7 +442,7 @@ table.data {
 table.data th {
   text-align: left;
   padding: 10px 12px;
-  background: #f1f5f9;
+  background: #eef1f3;
   border-bottom: 1px solid var(--border);
   color: var(--text-2);
   font-size: 11px;
@@ -484,7 +457,7 @@ table.data td {
   line-height: 1.45;
 }
 table.data tbody tr:hover {
-  background: var(--accent-soft);
+  background: #f3f9fc;
 }
 .mono {
   font-family: var(--mono);
@@ -505,7 +478,7 @@ table.data tbody tr:hover {
   border-top: 0;
 }
 .finding:hover {
-  background: rgba(0, 102, 204, 0.03);
+  background: rgba(10, 110, 156, 0.04);
 }
 .integrity-finding > div {
   grid-column: 1 / -1;
@@ -666,7 +639,7 @@ table.data tbody tr:hover {
 .hub-tile strong {
   display: block;
   font-size: 17px;
-  color: #20262d;
+  color: #064968;
   margin-bottom: 6px;
   transition: color var(--ease);
 }
