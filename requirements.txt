@@ -32,7 +32,8 @@ fpdf2
 # python-jose provides JWT creation and verification for API authentication.
 python-jose[cryptography]
 # passlib provides password hashing, including bcrypt support.
-passlib[bcrypt]
+passlib[bcrypt]==1.7.4
+bcrypt==4.0.1
 # email-validator validates examiner and account email addresses.
 email-validator
 # python-dotenv loads local backend configuration from .env files.
